@@ -22,11 +22,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <script type="importmap">
     {
         "imports": {
-            "@aleph-sdk/client": "https://esm.sh/@aleph-sdk/client@1.1.1",
+            "@aleph-sdk/client": "https://esm.sh/@aleph-sdk/client@1.1.0",
             "@aleph-sdk/ethereum": "https://esm.sh/@aleph-sdk/ethereum@1.1.0",
-            "@aleph-sdk/evm": "https://esm.sh/@aleph-sdk/evm@1.0.2",
-            "@aleph-sdk/message": "https://esm.sh/@aleph-sdk/message@1.1.1",
-            "@aleph-sdk/account": "https://esm.sh/@aleph-sdk/account@1.1.0",
+            "@aleph-sdk/evm": "https://esm.sh/@aleph-sdk/evm@1.0.1",
+            "@aleph-sdk/message": "https://esm.sh/@aleph-sdk/message@1.1.0",
+            "@aleph-sdk/account": "https://esm.sh/@aleph-sdk/account@1.0.1",
             "@aleph-sdk/core": "https://esm.sh/@aleph-sdk/core@1.1.0"
         }
     }
