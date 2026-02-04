@@ -1143,6 +1143,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 updateStep('step-instance', 'active', 'Please sign the instance creation message in your wallet...');
 
                 const instanceConfig = {
+                    channel: 'ALEPH-CLOUDSOLUTIONS',
                     authorized_keys: authorizedKeys,
                     resources: {
                         vcpus: selectedApp.requirements.vcpus,
