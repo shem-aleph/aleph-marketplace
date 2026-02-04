@@ -13,7 +13,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel
 import httpx
 
@@ -298,8 +298,8 @@ async def logout(authorization: Optional[str] = Header(None)):
 
 @app.get("/")
 async def home():
-    """Serve the marketplace frontend"""
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    """Redirect to the marketplace dashboard"""
+    return RedirectResponse(url="/dashboard")
 
 
 @app.get("/api/apps")
