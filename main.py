@@ -765,6 +765,35 @@ async def get_deployment(deployment_id: str, authorization: Optional[str] = Head
     return deployment
 
 
+@app.get("/api/ssh-keys/{address}")
+async def get_ssh_keys(address: str):
+    """Get SSH keys stored on the Aleph network for an address"""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                "https://api2.aleph.im/api/v0/posts.json",
+                params={
+                    "addresses": address,
+                    "types": "ALEPH-SSH",
+                    "channels": "ALEPH-CLOUDSOLUTIONS",
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                posts = data.get("posts", [])
+                keys = []
+                for post in posts:
+                    content = post.get("content", {})
+                    ssh_key = content.get("key", "")
+                    label = content.get("label", content.get("name", "Unnamed Key"))
+                    if ssh_key:
+                        keys.append({"key": ssh_key, "label": label})
+                return {"address": address, "keys": keys}
+    except Exception as e:
+        pass
+    return {"address": address, "keys": []}
+
+
 @app.get("/api/credits/{address}")
 async def get_credits(address: str):
     """Get credit balance for an address"""

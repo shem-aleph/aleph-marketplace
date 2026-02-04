@@ -113,6 +113,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .search-box input::placeholder { color: var(--text-muted); }
         .search-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
         
+        .credit-badge {
+            background: rgba(92, 255, 177, 0.1);
+            border: 1px solid var(--main1);
+            color: var(--main1);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-family: 'Source Code Pro', monospace;
+            font-size: 13px;
+            font-weight: 600;
+            display: none;
+        }
+        .credit-badge.warning {
+            border-color: var(--main2);
+            color: var(--main2);
+            background: rgba(254, 205, 23, 0.1);
+        }
+
         .wallet-section { display: flex; align-items: center; gap: 12px; }
         .wallet-btn {
             background: transparent;
@@ -317,6 +334,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .deploy-btn:hover:not(:disabled) { background: var(--gradient-main0); border-color: transparent; }
         .deploy-btn:disabled { border-color: var(--disabled2); color: var(--disabled2); cursor: not-allowed; }
         
+        /* SSH Key selector */
+        .ssh-key-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ssh-key-option:hover { border-color: var(--main0); }
+        .ssh-key-option.selected { border-color: var(--main0); background: rgba(2, 154, 255, 0.1); }
+        .ssh-key-option input[type="radio"] { accent-color: var(--main0); flex-shrink: 0; }
+        .ssh-key-label { font-size: 13px; color: var(--white); }
+        .ssh-key-preview { font-size: 11px; color: var(--text-muted); font-family: 'Source Code Pro', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
+        .ssh-key-loading { color: var(--text-muted); font-size: 13px; padding: 12px; text-align: center; }
+
         /* Modal */
         .modal {
             display: none;
@@ -528,6 +565,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
             
             <div class="wallet-section">
+                <span class="credit-badge" id="creditBadge">
+                    <span id="creditAmount">0</span> credits
+                </span>
                 <div id="walletInfo" style="display: none;">
                     <span class="wallet-address" id="walletAddress"></span>
                 </div>
@@ -617,8 +657,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <div class="cost-estimate" id="modalCost"></div>
                 
                 <div>
-                    <label>Your SSH Public Key (required for access)</label>
-                    <textarea id="sshKey" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..."></textarea>
+                    <label>SSH Public Key (required for access)</label>
+                    <div id="sshKeyList">
+                        <div class="ssh-key-loading">Connect wallet to load SSH keys...</div>
+                    </div>
+                    <div id="customKeySection" style="margin-top: 4px;">
+                        <div class="ssh-key-option" onclick="selectCustomKey()">
+                            <input type="radio" name="sshKey" value="custom" id="sshKeyCustomRadio">
+                            <div>
+                                <div class="ssh-key-label">Paste a custom key</div>
+                            </div>
+                        </div>
+                        <textarea id="customSshKey" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..." style="display: none;"></textarea>
+                    </div>
                 </div>
                 
                 <div>
@@ -666,7 +717,114 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             signer: null,
             alephAccount: null
         };
-        
+        let userCredits = null;
+        let userSshKeys = [];
+        let selectedSshKey = null;
+
+        async function fetchSshKeys(address) {
+            try {
+                const res = await fetch(`/api/ssh-keys/${address}`);
+                const data = await res.json();
+                userSshKeys = data.keys || [];
+                renderSshKeys();
+            } catch (e) {
+                console.error('Failed to fetch SSH keys:', e);
+                userSshKeys = [];
+                renderSshKeys();
+            }
+        }
+
+        function renderSshKeys() {
+            const container = document.getElementById('sshKeyList');
+
+            if (userSshKeys.length === 0) {
+                container.innerHTML = '<div class="ssh-key-loading">No SSH keys found on Aleph network. Paste one below.</div>';
+                // Auto-select the custom key option
+                selectCustomKey();
+                return;
+            }
+
+            container.innerHTML = userSshKeys.map(function(key, i) {
+                const preview = key.key.substring(0, 50) + '...';
+                const label = escapeHtml(key.label || 'SSH Key');
+                return '<div class="ssh-key-option ' + (i === 0 ? 'selected' : '') + '" onclick="selectSshKey(' + i + ')">'
+                    + '<input type="radio" name="sshKey" value="' + i + '" ' + (i === 0 ? 'checked' : '') + '>'
+                    + '<div style="overflow:hidden;">'
+                    + '<div class="ssh-key-label">' + label + '</div>'
+                    + '<div class="ssh-key-preview">' + escapeHtml(preview) + '</div>'
+                    + '</div></div>';
+            }).join('');
+
+            // Pre-select the first key
+            selectedSshKey = userSshKeys[0].key;
+        }
+
+        function selectSshKey(index) {
+            document.querySelectorAll('.ssh-key-option').forEach(function(el) { el.classList.remove('selected'); });
+            const options = document.querySelectorAll('#sshKeyList .ssh-key-option');
+            if (options[index]) {
+                options[index].classList.add('selected');
+                options[index].querySelector('input').checked = true;
+            }
+            document.getElementById('sshKeyCustomRadio').checked = false;
+            document.getElementById('customSshKey').style.display = 'none';
+            selectedSshKey = userSshKeys[index].key;
+        }
+
+        function selectCustomKey() {
+            document.querySelectorAll('.ssh-key-option').forEach(function(el) { el.classList.remove('selected'); });
+            const customOption = document.querySelector('#customKeySection .ssh-key-option');
+            customOption.classList.add('selected');
+            document.getElementById('sshKeyCustomRadio').checked = true;
+            document.getElementById('customSshKey').style.display = 'block';
+            selectedSshKey = null;
+        }
+
+        function getSelectedSshKey() {
+            if (document.getElementById('sshKeyCustomRadio').checked) {
+                return document.getElementById('customSshKey').value.trim();
+            }
+            return selectedSshKey;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function fetchCredits(address) {
+            try {
+                const res = await fetch(`/api/credits/${address}`);
+                const data = await res.json();
+                userCredits = data;
+
+                const badge = document.getElementById('creditBadge');
+                const amountEl = document.getElementById('creditAmount');
+                const balance = data.balance;
+
+                if (balance !== null && balance !== undefined) {
+                    const credits = Number(balance);
+                    if (credits > 1000000) {
+                        amountEl.textContent = (credits / 1000000).toFixed(1) + 'M';
+                    } else if (credits > 1000) {
+                        amountEl.textContent = (credits / 1000).toFixed(1) + 'K';
+                    } else {
+                        amountEl.textContent = credits.toFixed(0);
+                    }
+                    badge.style.display = 'inline-block';
+
+                    if (credits < 100) {
+                        badge.classList.add('warning');
+                    } else {
+                        badge.classList.remove('warning');
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch credits:', e);
+            }
+        }
+
         function showToast(message, type = 'info') {
             const existing = document.querySelector('.toast');
             if (existing) existing.remove();
@@ -710,6 +868,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 
                 updateWalletUI();
                 showToast('Wallet connected!', 'success');
+                fetchCredits(wallet.address);
+                fetchSshKeys(wallet.address);
             } catch (e) {
                 showToast(e.message || 'Connection failed', 'error');
                 btn.textContent = '🦊 Connect Wallet';
@@ -718,10 +878,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         
         function disconnectWallet() {
             wallet = { connected: false, address: null, provider: null, signer: null, alephAccount: null };
+            userCredits = null;
+            userSshKeys = [];
+            selectedSshKey = null;
             document.getElementById('connectBtn').classList.remove('connected');
             document.getElementById('connectBtnText').textContent = '🦊 Connect Wallet';
             document.getElementById('walletInfo').style.display = 'none';
             document.getElementById('disconnectBtn').style.display = 'none';
+            document.getElementById('creditBadge').style.display = 'none';
             document.getElementById('authNotice').classList.remove('hidden');
             renderApps();
             showToast('Disconnected', 'info');
@@ -845,7 +1009,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('modalBtns').style.display = 'flex';
             document.getElementById('deployBtn').disabled = false;
             document.getElementById('deployBtn').textContent = '🚀 Deploy with Wallet';
-            
+
+            // Re-render SSH keys for the modal
+            renderSshKeys();
+
             document.getElementById('deployModal').classList.add('active');
         }
         
@@ -863,16 +1030,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         
         async function startDeploy() {
-            const sshKey = document.getElementById('sshKey').value.trim();
+            const sshKey = getSelectedSshKey();
             const instanceName = document.getElementById('instanceName').value.trim() || `${selectedApp.id}-instance`;
-            
+
             if (!sshKey) {
-                showToast('SSH public key is required', 'error');
+                showToast('Please select or paste an SSH public key', 'error');
                 return;
             }
-            
-            if (!sshKey.startsWith('ssh-')) {
-                showToast('Invalid SSH key format', 'error');
+
+            if (!sshKey.startsWith('ssh-') && !sshKey.startsWith('ecdsa-')) {
+                showToast('Invalid SSH key format. Should start with ssh-rsa, ssh-ed25519, etc.', 'error');
                 return;
             }
             
