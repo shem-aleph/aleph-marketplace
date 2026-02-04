@@ -17,6 +17,9 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel
 import httpx
 
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s')
+
 from deployer import deploy as deploy_to_aleph, orchestrator
 from dashboard_v2 import DASHBOARD_HTML
 from ssh_executor import SSHExecutor, DeploymentTracker
@@ -454,65 +457,138 @@ def get_host_port_from_compose(compose_content: str) -> int:
     return 80  # Default to 80
 
 
+# In-memory store for async deploy jobs
+DEPLOY_JOBS = {}
+
+
+async def _run_deploy_job(deployment_id: str, app: dict, request: SSHDeployRequest, validated_host: str):
+    """Background task that performs the actual SSH deployment."""
+    log = logging.getLogger("deploy")
+    job = DEPLOY_JOBS[deployment_id]
+
+    try:
+        executor = SSHExecutor(
+            host=validated_host,
+            port=request.ssh_port,
+            user=request.ssh_user
+        )
+
+        # SSH connection with retries
+        job["step"] = "connecting"
+        log.info(f"Deploy {request.app_id} to {validated_host}:{request.ssh_port}")
+        connected = False
+        for attempt in range(12):
+            if await executor.test_connection():
+                connected = True
+                log.info(f"SSH connected on attempt {attempt + 1}")
+                break
+            log.info(f"SSH attempt {attempt + 1}/12 failed, retrying...")
+            if attempt < 11:
+                await asyncio.sleep(10)
+
+        if not connected:
+            log.error(f"Cannot connect to {validated_host}:{request.ssh_port} after 12 attempts")
+            job["status"] = "failed"
+            job["error"] = f"Cannot SSH to {validated_host}:{request.ssh_port} after 12 attempts"
+            deployment_tracker.update_deployment(deployment_id, status="failed", error=job["error"])
+            return
+
+        # Deploy docker-compose
+        job["step"] = "deploying"
+        log.info(f"Deploying docker-compose for {request.app_id}...")
+        deploy_result = await executor.deploy_compose(
+            app_name=request.app_id,
+            compose_content=app["docker_compose"]
+        )
+        log.info(f"Deploy result: status={deploy_result.get('status')}, error={deploy_result.get('error')}")
+
+        if deploy_result["status"] != "running":
+            job["status"] = "failed"
+            job["error"] = deploy_result.get("error", "Docker deployment failed")
+            deployment_tracker.update_deployment(deployment_id, status="failed", error=job["error"])
+            return
+
+        deployment_tracker.update_deployment(
+            deployment_id, status="running",
+            containers=deploy_result.get("containers", [])
+        )
+        job["containers"] = deploy_result.get("containers", [])
+
+        if deploy_result.get("generated_passwords"):
+            job["generated_passwords"] = deploy_result["generated_passwords"]
+
+        # Set up tunnel
+        if request.setup_tunnel:
+            job["step"] = "tunnel"
+            tunnel_port = request.tunnel_port
+            if tunnel_port is None:
+                tunnel_port = get_host_port_from_compose(app["docker_compose"])
+            tunnel_result = await executor.setup_tunnel(tunnel_port)
+            if tunnel_result.get("url"):
+                deployment_tracker.update_deployment(deployment_id, public_url=tunnel_result["url"])
+                job["public_url"] = tunnel_result["url"]
+            job["tunnel"] = tunnel_result
+
+        # Cleanup marketplace SSH key
+        try:
+            mk_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+            if os.path.exists(mk_path):
+                with open(mk_path) as f:
+                    mk_content = f.read().strip()
+                mk_parts = mk_content.split()
+                if len(mk_parts) >= 2:
+                    mk_id = mk_parts[1][:40]
+                    await executor.run_command(
+                        f"grep -v '{mk_id}' ~/.ssh/authorized_keys > /tmp/.ak_clean && "
+                        f"mv /tmp/.ak_clean ~/.ssh/authorized_keys && "
+                        f"chmod 600 ~/.ssh/authorized_keys"
+                    )
+        except Exception:
+            pass
+
+        job["status"] = "complete"
+        job["step"] = "done"
+        log.info(f"Deploy {deployment_id} complete. URL={job.get('public_url')}")
+
+    except Exception as e:
+        log.error(f"Deploy {deployment_id} failed: {e}")
+        job["status"] = "failed"
+        job["error"] = str(e)
+        deployment_tracker.update_deployment(deployment_id, status="failed", error=str(e))
+
+
 @app.post("/api/deploy/ssh")
 async def deploy_via_ssh(
     request: SSHDeployRequest,
-    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None)
 ):
     """
-    Deploy an app to an existing instance via SSH.
-    Actually executes the deployment (not just generates scripts).
+    Start an async deployment. Returns immediately with a deployment_id.
+    Poll GET /api/deploy/ssh/{deployment_id} for progress.
     """
-    # Require authentication
     if not authorization:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
     session = get_session_from_token(token)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
-    
+
     address = session["address"]
-    
+
     if request.app_id not in APPS:
         raise HTTPException(status_code=404, detail="App not found")
-    
+
     app = APPS[request.app_id]
-    
-    # SECURITY: Validate SSH host to prevent SSRF
+
     try:
         validated_host = validate_ssh_host(request.ssh_host)
         validate_port(request.ssh_port)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
-    # Create SSH executor
-    executor = SSHExecutor(
-        host=validated_host,
-        port=request.ssh_port,
-        user=request.ssh_user
-    )
-    
-    # Test connection with retries (VM might still be booting)
-    connected = False
-    for attempt in range(6):
-        if await executor.test_connection():
-            connected = True
-            break
-        if attempt < 5:
-            await asyncio.sleep(10)
 
-    if not connected:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot connect to {request.ssh_user}@{validated_host}:{request.ssh_port} "
-                   "after multiple attempts. The VM may still be starting."
-        )
-    
-    # Create deployment record
     deployment_id = f"{request.app_id}-{address[:8]}-{int(time.time())}"
-    deployment = deployment_tracker.add_deployment(
+    deployment_tracker.add_deployment(
         deployment_id=deployment_id,
         address=address,
         app_id=request.app_id,
@@ -522,81 +598,29 @@ async def deploy_via_ssh(
         status="deploying"
     )
     if request.instance_hash:
-        deployment_tracker.update_deployment(
-            deployment_id, instance_hash=request.instance_hash
-        )
-    
-    # Deploy the app
-    deploy_result = await executor.deploy_compose(
-        app_name=request.app_id,
-        compose_content=app["docker_compose"]
-    )
-    
-    if deploy_result["status"] != "running":
-        deployment_tracker.update_deployment(
-            deployment_id,
-            status="failed",
-            error=deploy_result.get("error")
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Deployment failed: {deploy_result.get('error', 'Unknown error')}"
-        )
-    
-    # Update deployment status
-    deployment_tracker.update_deployment(
-        deployment_id,
-        status="running",
-        containers=deploy_result.get("containers", [])
-    )
-    
-    result = {
-        "deployment_id": deployment_id,
-        "app_name": app["name"],
+        deployment_tracker.update_deployment(deployment_id, instance_hash=request.instance_hash)
+
+    DEPLOY_JOBS[deployment_id] = {
         "status": "running",
+        "step": "queued",
         "ssh_host": request.ssh_host,
         "ssh_port": request.ssh_port,
-        "containers": deploy_result.get("containers", []),
-        "app_directory": f"/root/apps/{request.app_id}",
+        "app_name": app["name"],
     }
 
-    if deploy_result.get("generated_passwords"):
-        result["generated_passwords"] = deploy_result["generated_passwords"]
-    
-    # Set up tunnel if requested
-    if request.setup_tunnel:
-        # Auto-detect port from docker-compose if not specified
-        tunnel_port = request.tunnel_port
-        if tunnel_port is None:
-            tunnel_port = get_host_port_from_compose(app["docker_compose"])
-        tunnel_result = await executor.setup_tunnel(tunnel_port)
-        if tunnel_result.get("url"):
-            deployment_tracker.update_deployment(
-                deployment_id,
-                public_url=tunnel_result["url"]
-            )
-            result["public_url"] = tunnel_result["url"]
-        result["tunnel"] = tunnel_result
+    # Launch background task
+    asyncio.create_task(_run_deploy_job(deployment_id, app, request, validated_host))
 
-    # Cleanup: Remove marketplace SSH key from the VM
-    try:
-        mk_path = os.path.expanduser("~/.ssh/id_rsa.pub")
-        if os.path.exists(mk_path):
-            with open(mk_path) as f:
-                mk_content = f.read().strip()
-            mk_parts = mk_content.split()
-            if len(mk_parts) >= 2:
-                # Use a unique substring of the key for matching
-                mk_id = mk_parts[1][:40]
-                await executor.run_command(
-                    f"grep -v '{mk_id}' ~/.ssh/authorized_keys > /tmp/.ak_clean && "
-                    f"mv /tmp/.ak_clean ~/.ssh/authorized_keys && "
-                    f"chmod 600 ~/.ssh/authorized_keys"
-                )
-    except Exception:
-        pass  # Non-critical cleanup
+    return {"deployment_id": deployment_id, "status": "started"}
 
-    return result
+
+@app.get("/api/deploy/ssh/{deployment_id}")
+async def get_deploy_status(deployment_id: str):
+    """Poll for deployment progress."""
+    job = DEPLOY_JOBS.get(deployment_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Deployment job not found")
+    return {"deployment_id": deployment_id, **job}
 
 
 @app.get("/api/deployments/my")
@@ -914,14 +938,17 @@ async def notify_crn_allocation(
                 json={"instance": instance_hash},
                 timeout=15.0
             )
+            status = "notified" if resp.status_code in (200, 201, 202) else "failed"
+            print(f"[NOTIFY] {crn_url} hash={instance_hash[:16]}... => {resp.status_code} {resp.text[:200]}")
             return {
-                "status": "notified" if resp.status_code in (200, 201, 202) else "failed",
+                "status": status,
                 "crn_url": crn_url,
                 "instance_hash": instance_hash,
                 "crn_status": resp.status_code,
                 "crn_response": resp.text[:500]
             }
     except Exception as e:
+        print(f"[NOTIFY] {crn_url} hash={instance_hash[:16]}... => ERROR: {e}")
         return {
             "status": "notification_failed",
             "crn_url": crn_url,
@@ -944,54 +971,23 @@ async def get_marketplace_key():
 @app.get("/api/allocation/{instance_hash}")
 async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
     """Get VM allocation info (IP) by querying the CRN directly or the scheduler"""
+    import logging
+    log = logging.getLogger("allocation")
+
     vm_ipv4 = None
     ssh_port = 22
     result = {"instance_hash": instance_hash, "allocated": False}
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # If we know the CRN, query it directly for the VM IP
+            # If we know the CRN, query it directly first (skip slow scheduler)
             crn_urls_to_try = []
             if crn_url:
                 url = crn_url if crn_url.startswith("http") else f"https://{crn_url}"
                 crn_urls_to_try.append(url.rstrip("/"))
 
-            # Also try the scheduler as fallback
-            try:
-                alloc_response = await client.get(
-                    "https://scheduler.api.aleph.cloud/api/v0/allocation",
-                    params={"item_hash": instance_hash},
-                    timeout=10.0
-                )
-                if alloc_response.status_code == 200:
-                    alloc_data = alloc_response.json()
-                    result["allocated"] = True
-                    result["allocation"] = alloc_data
-
-                    # Extract IP directly from scheduler response
-                    if isinstance(alloc_data, dict):
-                        vm_ipv4 = (alloc_data.get("vm_ipv4")
-                                   or alloc_data.get("ipv4")
-                                   or alloc_data.get("ip"))
-                        ssh_port = alloc_data.get("ssh_port", 22)
-
-                        net = alloc_data.get("networking", {})
-                        if not vm_ipv4 and net:
-                            vm_ipv4 = net.get("ipv4") or net.get("ip")
-                            ssh_port = net.get("ssh_port", ssh_port)
-
-                        # Add scheduler's CRN URL to try list
-                        sched_crn = (alloc_data.get("url")
-                                     or alloc_data.get("node", {}).get("url", "")
-                                     or alloc_data.get("node", {}).get("address", ""))
-                        if sched_crn and sched_crn not in crn_urls_to_try:
-                            url = sched_crn if sched_crn.startswith("http") else f"https://{sched_crn}"
-                            crn_urls_to_try.append(url.rstrip("/"))
-            except Exception:
-                pass  # Scheduler may be down, continue with CRN query
-
-            # Query CRN execution list for VM IP
-            if not vm_ipv4 and crn_urls_to_try:
+            # Query CRN execution list first (faster, more reliable for targeted instances)
+            if crn_urls_to_try:
                 for url in crn_urls_to_try:
                     for api_path in ["/v2/about/executions/list",
                                      "/about/executions/list"]:
@@ -1001,7 +997,6 @@ async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
                             )
                             if exec_resp.status_code == 200:
                                 executions = exec_resp.json()
-                                # CRN returns {hash: {networking, status, ...}}
                                 if isinstance(executions, dict) and instance_hash in executions:
                                     vm_data = executions[instance_hash]
                                     result["allocated"] = True
@@ -1010,13 +1005,42 @@ async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
                                     mapped = net.get("mapped_ports", {})
                                     if "22" in mapped:
                                         ssh_port = mapped["22"].get("host", 22)
+                                    log.info(f"CRN {url}: found instance, ip={vm_ipv4}, port={ssh_port}, running={vm_data.get('running')}")
                                     break
+                                else:
+                                    n = len(executions) if isinstance(executions, dict) else 'N/A'
+                                    log.info(f"CRN {url}{api_path}: instance not in list ({n} executions)")
+                            else:
+                                log.warning(f"CRN {url}{api_path}: status {exec_resp.status_code}")
                             if vm_ipv4:
                                 break
-                        except Exception:
+                        except Exception as e:
+                            log.warning(f"CRN {url}{api_path}: error {e}")
                             continue
                     if vm_ipv4:
                         break
+
+            # Fallback: try scheduler if CRN didn't have the info
+            if not vm_ipv4:
+                try:
+                    alloc_response = await client.get(
+                        "https://scheduler.api.aleph.cloud/api/v0/allocation",
+                        params={"item_hash": instance_hash},
+                        timeout=10.0
+                    )
+                    if alloc_response.status_code == 200:
+                        alloc_data = alloc_response.json()
+                        result["allocated"] = True
+                        if isinstance(alloc_data, dict):
+                            vm_ipv4 = (alloc_data.get("vm_ipv4")
+                                       or alloc_data.get("ipv4")
+                                       or alloc_data.get("ip"))
+                            ssh_port = alloc_data.get("ssh_port", 22)
+                            log.info(f"Scheduler: ip={vm_ipv4}")
+                    else:
+                        log.info(f"Scheduler: status {alloc_response.status_code}")
+                except Exception as e:
+                    log.info(f"Scheduler: error {e}")
 
             if vm_ipv4:
                 result["vm_ipv4"] = vm_ipv4
@@ -1024,6 +1048,7 @@ async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
 
             return result
     except Exception as e:
+        log.error(f"Allocation error: {e}")
         return {"instance_hash": instance_hash, "allocated": False, "error": str(e)}
 
 

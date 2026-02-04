@@ -1186,29 +1186,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 updateStep('step-instance', 'complete', `Instance: ${instanceId.slice(0,12)}... on ${selectedCrn.name || 'CRN'}`);
 
-                // Try to notify the CRN to start the instance
-                try {
-                    await fetch('/api/notify-allocation?' + new URLSearchParams({
-                        instance_hash: instanceId,
-                        crn_url: selectedCrn.url
-                    }), {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${wallet.token}` }
-                    });
-                } catch (e) {
-                    console.warn('CRN notification attempt:', e);
-                }
-
-                // Step 4: Poll for VM IP
-                updateStep('step-ip', 'active', 'Waiting for VM to be allocated (this may take a few minutes)...');
+                // Step 4: Wait for VM allocation
+                // We delay the first notify to let the instance message propagate through the Aleph network.
+                // The CRN validates payment by fetching the instance from the network — if it hasn't propagated yet, the notify is ignored.
+                updateStep('step-ip', 'active', 'Waiting for instance to propagate on network...');
 
                 let vmIp = null;
                 let sshPort = 22;
-                const maxPollAttempts = 30;
+                const maxPollAttempts = 36;
                 let consecutiveErrors = 0;
+
+                // Helper: send notify to CRN
+                async function notifyCrn() {
+                    try {
+                        const res = await fetch('/api/notify-allocation?' + new URLSearchParams({
+                            instance_hash: instanceId,
+                            crn_url: selectedCrn.url
+                        }), {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${wallet.token}` }
+                        });
+                        const data = await res.json();
+                        console.log('CRN notify response:', data);
+                        return data;
+                    } catch (e) {
+                        console.warn('CRN notification error:', e);
+                        return null;
+                    }
+                }
+
+                // Wait 15s for message propagation, then send first notify
+                await new Promise(r => setTimeout(r, 15000));
+                updateStep('step-ip', 'active', 'Notifying CRN to start VM...');
+                await notifyCrn();
 
                 for (let i = 0; i < maxPollAttempts; i++) {
                     await new Promise(r => setTimeout(r, 10000));
+
+                    // Re-send notify every 4th attempt in case the first was too early
+                    if (i > 0 && i % 4 === 0) {
+                        console.log(`Re-sending CRN notify (attempt ${i})`);
+                        await notifyCrn();
+                    }
 
                     try {
                         const allocRes = await fetch(`/api/allocation/${instanceId}?crn_url=${encodeURIComponent(selectedCrn.url)}`);
@@ -1241,8 +1260,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 updateStep('step-ip', 'complete', `VM IP: ${vmIp}`);
 
-                // Step 5: Deploy via SSH
-                updateStep('step-deploy', 'active', 'Connecting to VM and deploying application...');
+                // Step 5: Deploy via SSH (async — returns immediately, we poll for status)
+                updateStep('step-deploy', 'active', 'Starting deployment...');
 
                 const deployRes = await fetch('/api/deploy/ssh', {
                     method: 'POST',
@@ -1261,10 +1280,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 if (!deployRes.ok) {
                     const errData = await deployRes.json().catch(() => ({}));
-                    throw new Error(errData.detail || 'Application deployment failed');
+                    throw new Error(errData.detail || 'Failed to start deployment');
                 }
 
-                const deployData = await deployRes.json();
+                const { deployment_id } = await deployRes.json();
+
+                // Poll for deploy progress
+                const stepLabels = {
+                    queued: 'Deployment queued...',
+                    connecting: 'Connecting to VM via SSH...',
+                    deploying: 'Installing application (pulling images)...',
+                    tunnel: 'Setting up public URL...',
+                    done: 'Deployment complete!'
+                };
+                let deployData = null;
+                for (let i = 0; i < 60; i++) {
+                    await new Promise(r => setTimeout(r, 5000));
+                    try {
+                        const statusRes = await fetch(`/api/deploy/ssh/${deployment_id}`);
+                        deployData = await statusRes.json();
+
+                        if (deployData.status === 'complete') {
+                            break;
+                        }
+                        if (deployData.status === 'failed') {
+                            throw new Error(deployData.error || 'Deployment failed');
+                        }
+                        updateStep('step-deploy', 'active', stepLabels[deployData.step] || `Deploying... (${deployData.step})`);
+                    } catch (e) {
+                        if (e.message && e.message !== 'Failed to fetch') throw e;
+                        console.warn('Deploy poll error:', e);
+                    }
+                }
+
+                if (!deployData || deployData.status !== 'complete') {
+                    throw new Error('Deployment timed out. Check server logs.');
+                }
 
                 updateStep('step-deploy', 'complete', 'Application deployed!');
                 updateStep('step-done', 'complete', deployData.public_url ? 'App is live!' : 'Deployment complete!');
