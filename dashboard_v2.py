@@ -853,12 +853,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 wallet.address = await signer.getAddress();
                 wallet.connected = true;
                 
-                // Initialize Aleph SDK account
-                try {
-                    wallet.alephAccount = await window.AlephSDK.getAccountFromProvider(window.ethereum);
-                    console.log('Aleph account initialized:', wallet.alephAccount.address);
-                } catch (e) {
-                    console.warn('Could not initialize Aleph account:', e);
+                // Initialize Aleph SDK account (loaded async via ESM module)
+                if (window.AlephSDK) {
+                    try {
+                        wallet.alephAccount = await window.AlephSDK.getAccountFromProvider(window.ethereum);
+                        console.log('Aleph account initialized:', wallet.alephAccount.address);
+                    } catch (e) {
+                        console.warn('Could not initialize Aleph account:', e);
+                    }
+                } else {
+                    console.warn('Aleph SDK not loaded yet');
                 }
                 
                 updateWalletUI();
@@ -1065,10 +1069,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 // Step 1: Initialize account
                 updateStep('step-account', 'active');
                 
+                if (!window.AlephSDK) {
+                    throw new Error('Aleph SDK not loaded. Please refresh the page and try again.');
+                }
                 if (!wallet.alephAccount) {
                     wallet.alephAccount = await window.AlephSDK.getAccountFromProvider(window.ethereum);
                 }
-                
+
                 const client = new window.AlephSDK.AuthenticatedAlephHttpClient(wallet.alephAccount);
                 updateStep('step-account', 'complete', `Account: ${wallet.address.slice(0,8)}...`);
                 
