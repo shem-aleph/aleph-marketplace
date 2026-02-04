@@ -856,6 +856,92 @@ async def get_credits(address: str):
     return {"address": address, "balance": None, "credit_balance": None, "error": "Could not fetch balance"}
 
 
+@app.get("/api/crns")
+async def list_crns():
+    """Get available CRNs for instance allocation"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                "https://scheduler.api.aleph.cloud/api/v0/allocation/resource_nodes"
+            )
+            if response.status_code == 200:
+                data = response.json()
+                crns = []
+                for node in data.get("resource_nodes", []):
+                    if (node.get("status") == "active" and
+                            node.get("payment_receiver_address")):
+                        crns.append({
+                            "hash": node.get("hash"),
+                            "name": node.get("name"),
+                            "url": node.get("address"),
+                            "payment_address": node.get("payment_receiver_address"),
+                            "score": node.get("score", 0),
+                        })
+                crns.sort(key=lambda x: x.get("score", 0), reverse=True)
+                return {"crns": crns, "count": len(crns)}
+    except Exception as e:
+        return {"crns": [], "error": str(e)}
+    return {"crns": [], "error": "Failed to fetch CRNs"}
+
+
+@app.post("/api/notify-allocation")
+async def notify_crn_allocation(
+    instance_hash: str,
+    crn_url: str,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Try to notify a CRN about a new instance allocation.
+    This is a best-effort proxy — CRN may require owner signature.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = extract_token(authorization)
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    if not crn_url.startswith("http"):
+        crn_url = f"https://{crn_url}"
+    crn_url = crn_url.rstrip("/")
+
+    results = {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Try various CRN allocation endpoints
+        for endpoint in [
+            f"{crn_url}/v1/control/machine/{instance_hash}/stream",
+            f"{crn_url}/control/allocation/notify",
+        ]:
+            try:
+                resp = await client.put(
+                    endpoint,
+                    json={"instance": instance_hash},
+                    timeout=15.0
+                )
+                results[endpoint] = {
+                    "status": resp.status_code,
+                    "body": resp.text[:500]
+                }
+                if resp.status_code in (200, 201, 202):
+                    return {
+                        "status": "notified",
+                        "crn_url": crn_url,
+                        "instance_hash": instance_hash,
+                        "response": results[endpoint]
+                    }
+            except Exception as e:
+                results[endpoint] = {"error": str(e)}
+
+    return {
+        "status": "notification_failed",
+        "crn_url": crn_url,
+        "instance_hash": instance_hash,
+        "attempts": results,
+        "note": "CRN may require owner signature. The scheduler should still allocate the instance."
+    }
+
+
 @app.get("/api/marketplace-key")
 async def get_marketplace_key():
     """Get the marketplace's public SSH key for automated deployment"""

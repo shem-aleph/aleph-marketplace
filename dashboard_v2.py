@@ -1116,18 +1116,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 updateStep('step-auth', 'complete', 'Authenticated with server');
 
                 // Step 3: Create instance
-                updateStep('step-instance', 'active', 'Fetching marketplace key...');
+                updateStep('step-instance', 'active', 'Selecting compute node...');
 
-                // Get marketplace SSH key so server can auto-deploy
+                // Fetch available CRNs and marketplace key in parallel
+                const [crnsRes, mkRes] = await Promise.all([
+                    fetch('/api/crns'),
+                    fetch('/api/marketplace-key')
+                ]);
+                const crnsData = await crnsRes.json();
+                const mkData = await mkRes.json();
+
+                if (!crnsData.crns || crnsData.crns.length === 0) {
+                    throw new Error('No compute nodes available. Please try again later.');
+                }
+
+                // Auto-select the best CRN
+                const selectedCrn = crnsData.crns[0];
+                console.log('Selected CRN:', selectedCrn.name, selectedCrn.url);
+
+                // Include marketplace SSH key for automated deployment
                 let authorizedKeys = [sshKey];
-                try {
-                    const mkRes = await fetch('/api/marketplace-key');
-                    const mkData = await mkRes.json();
-                    if (mkData.key) {
-                        authorizedKeys.push(mkData.key);
-                    }
-                } catch (e) {
-                    console.warn('Could not fetch marketplace key:', e);
+                if (mkData.key) {
+                    authorizedKeys.push(mkData.key);
                 }
 
                 updateStep('step-instance', 'active', 'Please sign the instance creation message in your wallet...');
@@ -1152,14 +1162,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     },
                     payment: {
                         chain: 'ETH',
-                        type: window.AlephSDK.PaymentType.credit
+                        type: window.AlephSDK.PaymentType.credit,
+                        receiver: selectedCrn.payment_address
                     }
                 };
 
                 const response = await client.createInstance(instanceConfig);
                 const instanceId = response.item_hash;
 
-                updateStep('step-instance', 'complete', `Instance ID: ${instanceId.slice(0,12)}...`);
+                updateStep('step-instance', 'complete', `Instance: ${instanceId.slice(0,12)}... on ${selectedCrn.name || 'CRN'}`);
+
+                // Try to notify the CRN to start the instance
+                try {
+                    await fetch('/api/notify-allocation?' + new URLSearchParams({
+                        instance_hash: instanceId,
+                        crn_url: selectedCrn.url
+                    }), {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${wallet.token}` }
+                    });
+                } catch (e) {
+                    console.warn('CRN notification attempt:', e);
+                }
 
                 // Step 4: Poll for VM IP
                 updateStep('step-ip', 'active', 'Waiting for VM to be allocated (this may take a few minutes)...');
