@@ -43,6 +43,20 @@ ROOTFS_IMAGES = {
 SCHEDULER_URL = "https://scheduler.api.aleph.cloud"
 ALEPH_API_URL = "https://api2.aleph.im/api/v0"
 
+# Marketplace deployment SSH key paths
+MARKETPLACE_SSH_PRIVATE_KEY = "/root/.ssh/id_rsa"
+MARKETPLACE_SSH_PUBLIC_KEY = "/root/.ssh/id_rsa.pub"
+
+
+def _read_marketplace_pubkey() -> Optional[str]:
+    """Read the marketplace server's SSH public key for injection into VMs."""
+    try:
+        with open(MARKETPLACE_SSH_PUBLIC_KEY, "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        logger.warning(f"Marketplace SSH public key not found at {MARKETPLACE_SSH_PUBLIC_KEY}")
+        return None
+
 
 class AlephDeployer:
     """Handles deployment of apps to Aleph Cloud instances using SDK"""
@@ -67,6 +81,57 @@ class AlephDeployer:
         except Exception as e:
             logger.error(f"Failed to load account: {e}")
             return None
+    
+    def _build_ssh_keys(self, user_pubkey: str) -> list[str]:
+        """Build SSH keys list: user key + marketplace deployment key."""
+        keys = [user_pubkey]
+        marketplace_key = _read_marketplace_pubkey()
+        if marketplace_key:
+            keys.append(marketplace_key)
+            logger.info("Injecting marketplace deployment key for automated deployment")
+        else:
+            logger.warning("Marketplace deployment key not found - SSH deployment may fail")
+        return keys
+    
+    async def remove_marketplace_key_from_vm(
+        self,
+        ssh_host: str,
+        ssh_port: int,
+        ssh_user: str = "root",
+    ) -> dict:
+        """Remove the marketplace's public key from the VM's authorized_keys after deployment."""
+        marketplace_key = _read_marketplace_pubkey()
+        if not marketplace_key:
+            return {"status": "skipped", "reason": "No marketplace key to remove"}
+        
+        # Extract just the key data (type + base64) without the comment for matching
+        key_parts = marketplace_key.split()
+        if len(key_parts) >= 2:
+            # Match on the key type and base64 data (not the comment)
+            key_pattern = f"{key_parts[0]} {key_parts[1]}"
+        else:
+            key_pattern = marketplace_key
+        
+        # Escape special characters for sed
+        escaped_key = key_pattern.replace("/", "\\/").replace("+", "\\+")
+        
+        remove_cmd = f"sed -i '/{escaped_key}/d' ~/.ssh/authorized_keys"
+        
+        result = await self.execute_ssh_command(
+            ssh_host=ssh_host,
+            ssh_port=ssh_port,
+            ssh_user=ssh_user,
+            command=remove_cmd,
+            ssh_key_path=MARKETPLACE_SSH_PRIVATE_KEY,
+            timeout=30,
+        )
+        
+        if result.get("status") == "success":
+            logger.info("Successfully removed marketplace deployment key from VM")
+        else:
+            logger.warning(f"Failed to remove marketplace key from VM: {result}")
+        
+        return result
     
     @property
     def address(self) -> Optional[str]:
@@ -232,6 +297,10 @@ class AlephDeployer:
         Execute a command on a remote host via SSH.
         Uses subprocess for actual execution. The VM must have ALLOW_INTERNAL_SSH=1.
         """
+        # Default to marketplace deployment key
+        if ssh_key_path is None:
+            ssh_key_path = MARKETPLACE_SSH_PRIVATE_KEY
+        
         ssh_args = [
             "ssh",
             "-o", "StrictHostKeyChecking=no",
@@ -480,7 +549,7 @@ exit 1
                     payment=payment,
                     vcpus=vcpus,
                     memory=memory_mb,
-                    ssh_keys=[ssh_pubkey],
+                    ssh_keys=self._build_ssh_keys(ssh_pubkey),
                     hypervisor=HypervisorType.qemu,
                     metadata={"name": instance_name},
                     channel="ALEPH-MARKETPLACE",
@@ -888,6 +957,32 @@ class DeploymentOrchestrator:
             
             if tunnel_result.get("tunnel_url"):
                 deployment["public_url"] = tunnel_result["tunnel_url"]
+            
+            # Step: Remove marketplace deployment key from VM
+            try:
+                cleanup_result = await self.deployer.remove_marketplace_key_from_vm(
+                    ssh_host=ssh_host,
+                    ssh_port=ssh_port,
+                    ssh_user="root",
+                )
+                deployment["steps"].append({
+                    "step": "cleanup_deployment_key",
+                    "status": cleanup_result.get("status", "unknown"),
+                    "details": cleanup_result,
+                })
+                deployment["deployment_key_cleaned"] = cleanup_result.get("status") == "success"
+                if cleanup_result.get("status") == "success":
+                    logger.info(f"Deployment key cleaned up for {deployment_id}")
+                else:
+                    logger.warning(f"Deployment key cleanup returned: {cleanup_result.get('status')} for {deployment_id}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up deployment key for {deployment_id}: {e}")
+                deployment["steps"].append({
+                    "step": "cleanup_deployment_key",
+                    "status": "error",
+                    "details": {"error": str(e)},
+                })
+                deployment["deployment_key_cleaned"] = False
         else:
             deployment["status"] = "deploy_failed"
         
