@@ -955,56 +955,62 @@ async def get_marketplace_key():
 
 
 @app.get("/api/allocation/{instance_hash}")
-async def get_allocation(instance_hash: str):
-    """Get VM allocation info (IP, CRN) for an instance from the scheduler"""
+async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
+    """Get VM allocation info (IP) by querying the CRN directly or the scheduler"""
+    vm_ipv4 = None
+    ssh_port = 22
+    result = {"instance_hash": instance_hash, "allocated": False}
+
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # Query scheduler for allocation
-            alloc_response = await client.get(
-                "https://scheduler.api.aleph.cloud/api/v0/allocation",
-                params={"item_hash": instance_hash}
-            )
+            # If we know the CRN, query it directly for the VM IP
+            crn_urls_to_try = []
+            if crn_url:
+                url = crn_url if crn_url.startswith("http") else f"https://{crn_url}"
+                crn_urls_to_try.append(url.rstrip("/"))
 
-            if alloc_response.status_code != 200:
-                return {"instance_hash": instance_hash, "allocated": False}
+            # Also try the scheduler as fallback
+            try:
+                alloc_response = await client.get(
+                    "https://scheduler.api.aleph.cloud/api/v0/allocation",
+                    params={"item_hash": instance_hash},
+                    timeout=10.0
+                )
+                if alloc_response.status_code == 200:
+                    alloc_data = alloc_response.json()
+                    result["allocated"] = True
+                    result["allocation"] = alloc_data
 
-            alloc_data = alloc_response.json()
+                    # Extract IP directly from scheduler response
+                    if isinstance(alloc_data, dict):
+                        vm_ipv4 = (alloc_data.get("vm_ipv4")
+                                   or alloc_data.get("ipv4")
+                                   or alloc_data.get("ip"))
+                        ssh_port = alloc_data.get("ssh_port", 22)
 
-            result = {
-                "instance_hash": instance_hash,
-                "allocated": True,
-                "allocation": alloc_data,
-            }
+                        net = alloc_data.get("networking", {})
+                        if not vm_ipv4 and net:
+                            vm_ipv4 = net.get("ipv4") or net.get("ip")
+                            ssh_port = net.get("ssh_port", ssh_port)
 
-            # Try to extract VM IP from the allocation response
-            vm_ipv4 = None
-            ssh_port = 22
+                        # Add scheduler's CRN URL to try list
+                        sched_crn = (alloc_data.get("url")
+                                     or alloc_data.get("node", {}).get("url", "")
+                                     or alloc_data.get("node", {}).get("address", ""))
+                        if sched_crn and sched_crn not in crn_urls_to_try:
+                            url = sched_crn if sched_crn.startswith("http") else f"https://{sched_crn}"
+                            crn_urls_to_try.append(url.rstrip("/"))
+            except Exception:
+                pass  # Scheduler may be down, continue with CRN query
 
-            if isinstance(alloc_data, dict):
-                vm_ipv4 = (alloc_data.get("vm_ipv4") or alloc_data.get("ipv4")
-                           or alloc_data.get("ip"))
-                ssh_port = alloc_data.get("ssh_port", 22)
-
-                networking = alloc_data.get("networking", {})
-                if not vm_ipv4 and networking:
-                    vm_ipv4 = networking.get("ipv4") or networking.get("ip")
-                    ssh_port = networking.get("ssh_port", ssh_port)
-
-                # Try to query CRN for execution details
-                crn_url = (alloc_data.get("url")
-                           or alloc_data.get("node", {}).get("url", "")
-                           or alloc_data.get("node", {}).get("address", ""))
-
-                if crn_url and not vm_ipv4:
-                    if not crn_url.startswith("http"):
-                        crn_url = f"https://{crn_url}"
-                    crn_url = crn_url.rstrip("/")
-
+            # Query CRN execution list for VM IP
+            if not vm_ipv4 and crn_urls_to_try:
+                for url in crn_urls_to_try:
                     for api_path in ["/v2/about/executions/list",
                                      "/about/executions/list"]:
                         try:
                             exec_resp = await client.get(
-                                f"{crn_url}{api_path}", timeout=10.0
+                                f"{url}{api_path}", timeout=10.0
                             )
                             if exec_resp.status_code == 200:
                                 executions = exec_resp.json()
@@ -1014,6 +1020,7 @@ async def get_allocation(instance_hash: str):
                                     h = (item.get("hash")
                                          or item.get("item_hash", ""))
                                     if h == instance_hash:
+                                        result["allocated"] = True
                                         net = item.get("networking", {})
                                         vm_ipv4 = (net.get("ipv4")
                                                    or net.get("ip")
@@ -1024,6 +1031,8 @@ async def get_allocation(instance_hash: str):
                                 break
                         except Exception:
                             continue
+                    if vm_ipv4:
+                        break
 
             if vm_ipv4:
                 result["vm_ipv4"] = vm_ipv4

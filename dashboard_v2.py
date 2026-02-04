@@ -1197,7 +1197,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     await new Promise(r => setTimeout(r, 10000));
 
                     try {
-                        const allocRes = await fetch(`/api/allocation/${instanceId}`);
+                        const allocRes = await fetch(`/api/allocation/${instanceId}?crn_url=${encodeURIComponent(selectedCrn.url)}`);
                         const allocData = await allocRes.json();
                         consecutiveErrors = 0;
 
