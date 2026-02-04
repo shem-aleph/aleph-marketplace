@@ -956,22 +956,50 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('deployProgress').style.display = 'none';
                 document.getElementById('modalBtns').style.display = 'none';
                 
+                // Generate random passwords to replace placeholders in compose content
+                let composeForDeploy = selectedApp.docker_compose;
+                const generatedPasswords = {};
+                if (composeForDeploy.includes('__GENERATED_PASSWORD__')) {
+                    const pw = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                        .map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 22);
+                    composeForDeploy = composeForDeploy.replaceAll('__GENERATED_PASSWORD__', pw);
+                    generatedPasswords.password = pw;
+                }
+                if (composeForDeploy.includes('__GENERATED_ROOT_PASSWORD__')) {
+                    const rpw = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                        .map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 22);
+                    composeForDeploy = composeForDeploy.replaceAll('__GENERATED_ROOT_PASSWORD__', rpw);
+                    generatedPasswords.root_password = rpw;
+                }
+
                 const setupScript = `# Connect to your instance and run:
 ssh root@<INSTANCE_IP>
 
 # Then run these commands:
 apt update && apt install -y docker.io docker-compose
-echo '${btoa(selectedApp.docker_compose)}' | base64 -d > docker-compose.yml
+echo '${btoa(composeForDeploy)}' | base64 -d > docker-compose.yml
 docker-compose up -d`;
-                
+
+                let credentialsHtml = '';
+                if (Object.keys(generatedPasswords).length > 0) {
+                    credentialsHtml = '<p style="margin-top:16px;font-weight:bold;color:var(--main2)">Generated Credentials (save these!):</p>';
+                    if (generatedPasswords.password) {
+                        credentialsHtml += `<code>Password: ${generatedPasswords.password}</code>`;
+                    }
+                    if (generatedPasswords.root_password) {
+                        credentialsHtml += `<code>Root Password: ${generatedPasswords.root_password}</code>`;
+                    }
+                }
+
                 document.getElementById('deploySuccess').innerHTML = `
                     <div class="success-panel">
-                        <h4>🎉 Instance Created Successfully!</h4>
+                        <h4>Instance Created Successfully!</h4>
                         <p>Instance ID: <code>${instanceId}</code></p>
+                        ${credentialsHtml}
                         <p style="margin-top:12px">Your instance is being provisioned. Check the <a href="https://app.aleph.cloud/console/" target="_blank" style="color:var(--main1)">Aleph Console</a> for status and IP address.</p>
                         <p style="margin-top:16px;font-weight:bold">Setup Commands:</p>
                         <code>${setupScript}</code>
-                        <button class="copy-btn" onclick="navigator.clipboard.writeText(\`${setupScript.replace(/`/g, '\\`')}\`); showToast('Copied!', 'success')">📋 Copy Commands</button>
+                        <button class="copy-btn" onclick="navigator.clipboard.writeText(\`${setupScript.replace(/`/g, '\\`')}\`); showToast('Copied!', 'success')">Copy Commands</button>
                         <button class="btn-cancel" style="margin-top:16px;width:100%" onclick="closeModal()">Close</button>
                     </div>
                 `;

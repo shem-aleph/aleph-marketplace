@@ -120,12 +120,26 @@ class SSHExecutor:
                 "error": str(e),
                 "steps": []
             }
-        
+
+        # Generate random passwords to replace placeholder tokens
+        generated_passwords = {}
+        if "__GENERATED_PASSWORD__" in compose_content:
+            password = secrets.token_urlsafe(16)
+            compose_content = compose_content.replace("__GENERATED_PASSWORD__", password)
+            generated_passwords["password"] = password
+        if "__GENERATED_ROOT_PASSWORD__" in compose_content:
+            root_password = secrets.token_urlsafe(16)
+            compose_content = compose_content.replace("__GENERATED_ROOT_PASSWORD__", root_password)
+            generated_passwords["root_password"] = root_password
+
         result = {
             "status": "pending",
             "steps": [],
             "app_name": safe_app_name
         }
+
+        if generated_passwords:
+            result["generated_passwords"] = generated_passwords
         
         # Step 1: Create app directory (using shlex.quote for safety)
         safe_dir = shlex.quote(f"/root/apps/{safe_app_name}")
@@ -154,7 +168,31 @@ class SSHExecutor:
             result["status"] = "failed"
             result["error"] = f"Failed to write compose file: {stderr}"
             return result
-        
+
+        # Step 2b: Write supporting config files if needed
+        if "prometheus" in safe_app_name or "grafana" in safe_app_name:
+            prometheus_config = (
+                "global:\n"
+                "  scrape_interval: 15s\n"
+                "\n"
+                "scrape_configs:\n"
+                "  - job_name: 'prometheus'\n"
+                "    static_configs:\n"
+                "      - targets: ['localhost:9090']\n"
+            )
+            prom_path = f"/root/apps/{safe_app_name}/prometheus.yml"
+            prom_cmd = _safe_write_file_command(prometheus_config, prom_path)
+            code, _, stderr = await self.run_command(prom_cmd)
+            result["steps"].append({
+                "step": "write_prometheus_config",
+                "success": code == 0,
+                "error": stderr if code != 0 else None
+            })
+            if code != 0:
+                result["status"] = "failed"
+                result["error"] = f"Failed to write prometheus.yml: {stderr}"
+                return result
+
         # Step 3: Check/Install Docker
         if not await self.check_docker():
             result["steps"].append({"step": "docker_check", "success": False, "installing": True})

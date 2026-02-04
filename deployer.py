@@ -29,6 +29,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
+def get_host_port_from_compose(compose_content: str) -> int:
+    """Extract the first exposed host port from docker-compose"""
+    import re
+    # Match patterns like '80:3000', '8080:80', etc.
+    port_pattern = r"['\"]?(\d+):(\d+)['\"]?"
+    matches = re.findall(port_pattern, compose_content)
+    if matches:
+        return int(matches[0][0])  # Return the host port (first number)
+    return 80  # Default to 80
+
 # Default rootfs images available on Aleph
 ROOTFS_IMAGES = {
     "ubuntu22": "887957042bb0e360da3485ed33175882571f0b716d31e9fce8fb984c48fa77fb",  # Ubuntu 22.04
@@ -441,9 +452,22 @@ class AlephDeployer:
     ) -> dict:
         """
         Deploy a docker-compose application to an existing instance via SSH.
-        
+
         This generates the commands needed - actual execution requires SSH access.
         """
+        import secrets as _secrets
+
+        # Generate random passwords to replace placeholder tokens
+        generated_passwords = {}
+        if "__GENERATED_PASSWORD__" in compose_content:
+            password = _secrets.token_urlsafe(16)
+            compose_content = compose_content.replace("__GENERATED_PASSWORD__", password)
+            generated_passwords["password"] = password
+        if "__GENERATED_ROOT_PASSWORD__" in compose_content:
+            root_password = _secrets.token_urlsafe(16)
+            compose_content = compose_content.replace("__GENERATED_ROOT_PASSWORD__", root_password)
+            generated_passwords["root_password"] = root_password
+
         deploy_script = f'''#!/bin/bash
 set -e
 
@@ -470,12 +494,15 @@ echo "✅ {app_name} deployed successfully!"
 docker compose ps
 '''
         
-        return {
+        result = {
             "status": "script_ready",
             "ssh_command": f"ssh -p {ssh_port} {ssh_user}@{ssh_host}",
             "deploy_script": deploy_script,
             "app_directory": f"/root/apps/{app_name}"
         }
+        if generated_passwords:
+            result["generated_passwords"] = generated_passwords
+        return result
     
     async def setup_cloudflare_tunnel(
         self,
@@ -562,11 +589,12 @@ class DeploymentOrchestrator:
             })
             
             # Tunnel setup
+            tunnel_port = get_host_port_from_compose(app["docker_compose"])
             tunnel_result = await self.deployer.setup_cloudflare_tunnel(
                 ssh_host=ssh_info["host"],
                 ssh_port=ssh_info.get("port", 22),
                 ssh_user=ssh_info.get("user", "root"),
-                local_port=80
+                local_port=tunnel_port
             )
             result["steps"].append({
                 "step": "prepare_tunnel",

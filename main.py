@@ -394,7 +394,7 @@ async def execute_deployment(
         raise HTTPException(status_code=400, detail=str(e))
     
     # Get the app
-    app_name = deployment_id.split("-")[0]
+    app_name = deployment_id.rsplit("-", 1)[0]
     if app_name not in APPS:
         raise HTTPException(status_code=404, detail="App not found")
     
@@ -412,11 +412,12 @@ async def execute_deployment(
         app_name=app["id"]
     )
     
+    tunnel_port = get_host_port_from_compose(app["docker_compose"])
     tunnel_result = await deployer.setup_cloudflare_tunnel(
         ssh_host=ssh_info.host,
         ssh_port=ssh_info.port,
         ssh_user=ssh_info.user,
-        local_port=80
+        local_port=tunnel_port
     )
     
     return {
@@ -545,6 +546,9 @@ async def deploy_via_ssh(
         "containers": deploy_result.get("containers", []),
         "app_directory": f"/root/apps/{request.app_id}",
     }
+
+    if deploy_result.get("generated_passwords"):
+        result["generated_passwords"] = deploy_result["generated_passwords"]
     
     # Set up tunnel if requested
     if request.setup_tunnel:
