@@ -1001,19 +1001,16 @@ async def get_allocation(instance_hash: str, crn_url: Optional[str] = None):
                             )
                             if exec_resp.status_code == 200:
                                 executions = exec_resp.json()
-                                items = (executions if isinstance(executions, list)
-                                         else list(executions.values()))
-                                for item in items:
-                                    h = (item.get("hash")
-                                         or item.get("item_hash", ""))
-                                    if h == instance_hash:
-                                        result["allocated"] = True
-                                        net = item.get("networking", {})
-                                        vm_ipv4 = (net.get("ipv4")
-                                                   or net.get("ip")
-                                                   or item.get("ipv4"))
-                                        ssh_port = net.get("ssh_port", ssh_port)
-                                        break
+                                # CRN returns {hash: {networking, status, ...}}
+                                if isinstance(executions, dict) and instance_hash in executions:
+                                    vm_data = executions[instance_hash]
+                                    result["allocated"] = True
+                                    net = vm_data.get("networking", {})
+                                    vm_ipv4 = net.get("host_ipv4")
+                                    mapped = net.get("mapped_ports", {})
+                                    if "22" in mapped:
+                                        ssh_port = mapped["22"].get("host", 22)
+                                    break
                             if vm_ipv4:
                                 break
                         except Exception:
