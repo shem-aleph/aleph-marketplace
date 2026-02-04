@@ -907,40 +907,27 @@ async def notify_crn_allocation(
         crn_url = f"https://{crn_url}"
     crn_url = crn_url.rstrip("/")
 
-    results = {}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Try various CRN allocation endpoints
-        for endpoint in [
-            f"{crn_url}/v1/control/machine/{instance_hash}/stream",
-            f"{crn_url}/control/allocation/notify",
-        ]:
-            try:
-                resp = await client.put(
-                    endpoint,
-                    json={"instance": instance_hash},
-                    timeout=15.0
-                )
-                results[endpoint] = {
-                    "status": resp.status_code,
-                    "body": resp.text[:500]
-                }
-                if resp.status_code in (200, 201, 202):
-                    return {
-                        "status": "notified",
-                        "crn_url": crn_url,
-                        "instance_hash": instance_hash,
-                        "response": results[endpoint]
-                    }
-            except Exception as e:
-                results[endpoint] = {"error": str(e)}
-
-    return {
-        "status": "notification_failed",
-        "crn_url": crn_url,
-        "instance_hash": instance_hash,
-        "attempts": results,
-        "note": "CRN may require owner signature. The scheduler should still allocate the instance."
-    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{crn_url}/control/allocation/notify",
+                json={"instance": instance_hash},
+                timeout=15.0
+            )
+            return {
+                "status": "notified" if resp.status_code in (200, 201, 202) else "failed",
+                "crn_url": crn_url,
+                "instance_hash": instance_hash,
+                "crn_status": resp.status_code,
+                "crn_response": resp.text[:500]
+            }
+    except Exception as e:
+        return {
+            "status": "notification_failed",
+            "crn_url": crn_url,
+            "instance_hash": instance_hash,
+            "error": str(e)
+        }
 
 
 @app.get("/api/marketplace-key")
