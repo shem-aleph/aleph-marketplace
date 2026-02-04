@@ -440,6 +440,7 @@ class SSHDeployRequest(BaseModel):
     ssh_user: str = "root"
     setup_tunnel: bool = True
     tunnel_port: Optional[int] = None  # Auto-detect from docker-compose if not specified
+    instance_hash: Optional[str] = None  # Aleph instance hash for tracking
 
 
 def get_host_port_from_compose(compose_content: str) -> int:
@@ -493,12 +494,20 @@ async def deploy_via_ssh(
         user=request.ssh_user
     )
     
-    # Test connection first
-    if not await executor.test_connection():
+    # Test connection with retries (VM might still be booting)
+    connected = False
+    for attempt in range(6):
+        if await executor.test_connection():
+            connected = True
+            break
+        if attempt < 5:
+            await asyncio.sleep(10)
+
+    if not connected:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot connect to {request.ssh_user}@{request.ssh_host}:{request.ssh_port}. "
-                   "Check SSH access and try again."
+            detail=f"Cannot connect to {request.ssh_user}@{validated_host}:{request.ssh_port} "
+                   "after multiple attempts. The VM may still be starting."
         )
     
     # Create deployment record
@@ -512,6 +521,10 @@ async def deploy_via_ssh(
         ssh_port=request.ssh_port,
         status="deploying"
     )
+    if request.instance_hash:
+        deployment_tracker.update_deployment(
+            deployment_id, instance_hash=request.instance_hash
+        )
     
     # Deploy the app
     deploy_result = await executor.deploy_compose(
@@ -564,7 +577,25 @@ async def deploy_via_ssh(
             )
             result["public_url"] = tunnel_result["url"]
         result["tunnel"] = tunnel_result
-    
+
+    # Cleanup: Remove marketplace SSH key from the VM
+    try:
+        mk_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+        if os.path.exists(mk_path):
+            with open(mk_path) as f:
+                mk_content = f.read().strip()
+            mk_parts = mk_content.split()
+            if len(mk_parts) >= 2:
+                # Use a unique substring of the key for matching
+                mk_id = mk_parts[1][:40]
+                await executor.run_command(
+                    f"grep -v '{mk_id}' ~/.ssh/authorized_keys > /tmp/.ak_clean && "
+                    f"mv /tmp/.ak_clean ~/.ssh/authorized_keys && "
+                    f"chmod 600 ~/.ssh/authorized_keys"
+                )
+    except Exception:
+        pass  # Non-critical cleanup
+
     return result
 
 
@@ -823,6 +854,97 @@ async def get_credits(address: str):
     except Exception as e:
         pass
     return {"address": address, "balance": None, "credit_balance": None, "error": "Could not fetch balance"}
+
+
+@app.get("/api/marketplace-key")
+async def get_marketplace_key():
+    """Get the marketplace's public SSH key for automated deployment"""
+    key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+    try:
+        with open(key_path) as f:
+            return {"key": f.read().strip()}
+    except FileNotFoundError:
+        return {"key": None, "error": "Marketplace SSH key not found on server"}
+
+
+@app.get("/api/allocation/{instance_hash}")
+async def get_allocation(instance_hash: str):
+    """Get VM allocation info (IP, CRN) for an instance from the scheduler"""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Query scheduler for allocation
+            alloc_response = await client.get(
+                "https://scheduler.api.aleph.cloud/api/v0/allocation",
+                params={"item_hash": instance_hash}
+            )
+
+            if alloc_response.status_code != 200:
+                return {"instance_hash": instance_hash, "allocated": False}
+
+            alloc_data = alloc_response.json()
+
+            result = {
+                "instance_hash": instance_hash,
+                "allocated": True,
+                "allocation": alloc_data,
+            }
+
+            # Try to extract VM IP from the allocation response
+            vm_ipv4 = None
+            ssh_port = 22
+
+            if isinstance(alloc_data, dict):
+                vm_ipv4 = (alloc_data.get("vm_ipv4") or alloc_data.get("ipv4")
+                           or alloc_data.get("ip"))
+                ssh_port = alloc_data.get("ssh_port", 22)
+
+                networking = alloc_data.get("networking", {})
+                if not vm_ipv4 and networking:
+                    vm_ipv4 = networking.get("ipv4") or networking.get("ip")
+                    ssh_port = networking.get("ssh_port", ssh_port)
+
+                # Try to query CRN for execution details
+                crn_url = (alloc_data.get("url")
+                           or alloc_data.get("node", {}).get("url", "")
+                           or alloc_data.get("node", {}).get("address", ""))
+
+                if crn_url and not vm_ipv4:
+                    if not crn_url.startswith("http"):
+                        crn_url = f"https://{crn_url}"
+                    crn_url = crn_url.rstrip("/")
+
+                    for api_path in ["/v2/about/executions/list",
+                                     "/about/executions/list"]:
+                        try:
+                            exec_resp = await client.get(
+                                f"{crn_url}{api_path}", timeout=10.0
+                            )
+                            if exec_resp.status_code == 200:
+                                executions = exec_resp.json()
+                                items = (executions if isinstance(executions, list)
+                                         else list(executions.values()))
+                                for item in items:
+                                    h = (item.get("hash")
+                                         or item.get("item_hash", ""))
+                                    if h == instance_hash:
+                                        net = item.get("networking", {})
+                                        vm_ipv4 = (net.get("ipv4")
+                                                   or net.get("ip")
+                                                   or item.get("ipv4"))
+                                        ssh_port = net.get("ssh_port", ssh_port)
+                                        break
+                            if vm_ipv4:
+                                break
+                        except Exception:
+                            continue
+
+            if vm_ipv4:
+                result["vm_ipv4"] = vm_ipv4
+                result["ssh_port"] = ssh_port
+
+            return result
+    except Exception as e:
+        return {"instance_hash": instance_hash, "allocated": False, "error": str(e)}
 
 
 # ============ Static Files & Dashboard ============

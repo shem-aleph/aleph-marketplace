@@ -715,7 +715,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             address: null,
             provider: null,
             signer: null,
-            alephAccount: null
+            alephAccount: null,
+            token: null
         };
         let userCredits = null;
         let userSshKeys = [];
@@ -876,7 +877,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         
         function disconnectWallet() {
-            wallet = { connected: false, address: null, provider: null, signer: null, alephAccount: null };
+            wallet = { connected: false, address: null, provider: null, signer: null, alephAccount: null, token: null };
             userCredits = null;
             userSshKeys = [];
             selectedSshKey = null;
@@ -890,6 +891,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             showToast('Disconnected', 'info');
         }
         
+        async function authenticateWithServer() {
+            const nonceRes = await fetch('/api/auth/nonce', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: wallet.address })
+            });
+            if (!nonceRes.ok) throw new Error('Failed to get authentication nonce');
+            const nonceData = await nonceRes.json();
+
+            const signature = await wallet.signer.signMessage(nonceData.message);
+
+            const verifyRes = await fetch('/api/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    address: wallet.address,
+                    signature: signature,
+                    nonce: nonceData.nonce
+                })
+            });
+            if (!verifyRes.ok) throw new Error('Authentication verification failed');
+            const verifyData = await verifyRes.json();
+            wallet.token = verifyData.token;
+            wallet.tokenExpiry = verifyData.expires_at;
+        }
+
         function updateWalletUI() {
             document.getElementById('connectBtn').classList.add('connected');
             document.getElementById('connectBtnText').textContent = '✓ Connected';
@@ -1041,20 +1068,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 showToast('Invalid SSH key format. Should start with ssh-rsa, ssh-ed25519, etc.', 'error');
                 return;
             }
-            
+
             // Show progress
             document.getElementById('deployConfig').style.display = 'none';
             document.getElementById('deployProgress').style.display = 'block';
             document.getElementById('deployBtn').disabled = true;
             document.getElementById('deployBtn').textContent = 'Deploying...';
-            
+
             const steps = [
                 { id: 'step-account', title: 'Initialize Account', desc: 'Connecting to Aleph network...' },
+                { id: 'step-auth', title: 'Server Authentication', desc: 'Signing auth message...' },
                 { id: 'step-instance', title: 'Create Instance', desc: 'Signing instance creation message...' },
-                { id: 'step-wait', title: 'Wait for Allocation', desc: 'Waiting for CRN to allocate resources...' },
-                { id: 'step-done', title: 'Deployment Complete', desc: 'Your instance is ready!' }
+                { id: 'step-ip', title: 'Wait for VM', desc: 'Waiting for VM allocation...' },
+                { id: 'step-deploy', title: 'Deploy Application', desc: 'Installing app via SSH...' },
+                { id: 'step-done', title: 'Deployment Complete', desc: 'Your app is live!' }
             ];
-            
+
             document.getElementById('deploySteps').innerHTML = steps.map(s => `
                 <div class="deploy-step" id="${s.id}">
                     <span class="step-icon">○</span>
@@ -1064,11 +1093,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     </div>
                 </div>
             `).join('');
-            
+
             try {
                 // Step 1: Initialize account
                 updateStep('step-account', 'active');
-                
+
                 if (!window.AlephSDK) {
                     throw new Error('Aleph SDK not loaded. Please refresh the page and try again.');
                 }
@@ -1078,12 +1107,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 const client = new window.AlephSDK.AuthenticatedAlephHttpClient(wallet.alephAccount);
                 updateStep('step-account', 'complete', `Account: ${wallet.address.slice(0,8)}...`);
-                
-                // Step 2: Create instance
-                updateStep('step-instance', 'active', 'Please sign the message in your wallet...');
-                
+
+                // Step 2: Authenticate with server (needed for SSH deploy later)
+                updateStep('step-auth', 'active', 'Please sign the authentication message in your wallet...');
+                if (!wallet.token || (wallet.tokenExpiry && Date.now() / 1000 > wallet.tokenExpiry - 60)) {
+                    await authenticateWithServer();
+                }
+                updateStep('step-auth', 'complete', 'Authenticated with server');
+
+                // Step 3: Create instance
+                updateStep('step-instance', 'active', 'Fetching marketplace key...');
+
+                // Get marketplace SSH key so server can auto-deploy
+                let authorizedKeys = [sshKey];
+                try {
+                    const mkRes = await fetch('/api/marketplace-key');
+                    const mkData = await mkRes.json();
+                    if (mkData.key) {
+                        authorizedKeys.push(mkData.key);
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch marketplace key:', e);
+                }
+
+                updateStep('step-instance', 'active', 'Please sign the instance creation message in your wallet...');
+
                 const instanceConfig = {
-                    authorized_keys: [sshKey],
+                    authorized_keys: authorizedKeys,
                     resources: {
                         vcpus: selectedApp.requirements.vcpus,
                         memory: selectedApp.requirements.memory_mb,
@@ -1099,83 +1149,131 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     variables: {
                         APP_NAME: selectedApp.name,
                         APP_ID: selectedApp.id,
-                        DOCKER_COMPOSE: btoa(selectedApp.docker_compose)
                     },
                     payment: {
                         chain: 'ETH',
                         type: window.AlephSDK.PaymentType.credit
                     }
                 };
-                
+
                 const response = await client.createInstance(instanceConfig);
                 const instanceId = response.item_hash;
-                
+
                 updateStep('step-instance', 'complete', `Instance ID: ${instanceId.slice(0,12)}...`);
-                
-                // Step 3: Wait for allocation
-                updateStep('step-wait', 'active', 'Waiting for instance to be allocated...');
-                
-                // Poll for instance status (simplified - real impl would check CRN)
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-                updateStep('step-wait', 'complete', 'Instance allocated!');
-                updateStep('step-done', 'complete');
-                
-                // Show success
+
+                // Step 4: Poll for VM IP
+                updateStep('step-ip', 'active', 'Waiting for VM to be allocated (this may take a few minutes)...');
+
+                let vmIp = null;
+                let sshPort = 22;
+                const maxPollAttempts = 30;
+                let consecutiveErrors = 0;
+
+                for (let i = 0; i < maxPollAttempts; i++) {
+                    await new Promise(r => setTimeout(r, 10000));
+
+                    try {
+                        const allocRes = await fetch(`/api/allocation/${instanceId}`);
+                        const allocData = await allocRes.json();
+                        consecutiveErrors = 0;
+
+                        if (allocData.vm_ipv4) {
+                            vmIp = allocData.vm_ipv4;
+                            sshPort = allocData.ssh_port || 22;
+                            break;
+                        }
+
+                        if (allocData.error) {
+                            updateStep('step-ip', 'active', `Waiting for allocation... (${i + 1}/${maxPollAttempts})`);
+                        } else {
+                            updateStep('step-ip', 'active', `Allocated, waiting for VM IP... (${i + 1}/${maxPollAttempts})`);
+                        }
+                    } catch (e) {
+                        console.warn('Allocation poll error:', e);
+                        consecutiveErrors++;
+                        if (consecutiveErrors >= 5) {
+                            throw new Error('Allocation API unreachable. Check network connection.');
+                        }
+                    }
+                }
+
+                if (!vmIp) {
+                    throw new Error('Could not get VM IP after 5 minutes. The VM may still be starting. Check the Aleph Console.');
+                }
+
+                updateStep('step-ip', 'complete', `VM IP: ${vmIp}`);
+
+                // Step 5: Deploy via SSH
+                updateStep('step-deploy', 'active', 'Connecting to VM and deploying application...');
+
+                const deployRes = await fetch('/api/deploy/ssh', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${wallet.token}`
+                    },
+                    body: JSON.stringify({
+                        app_id: selectedApp.id,
+                        ssh_host: vmIp,
+                        ssh_port: sshPort,
+                        setup_tunnel: true,
+                        instance_hash: instanceId
+                    })
+                });
+
+                if (!deployRes.ok) {
+                    const errData = await deployRes.json().catch(() => ({}));
+                    throw new Error(errData.detail || 'Application deployment failed');
+                }
+
+                const deployData = await deployRes.json();
+
+                updateStep('step-deploy', 'complete', 'Application deployed!');
+                updateStep('step-done', 'complete', deployData.public_url ? 'App is live!' : 'Deployment complete!');
+
+                // Show success panel
                 document.getElementById('deployProgress').style.display = 'none';
                 document.getElementById('modalBtns').style.display = 'none';
-                
-                // Generate random passwords to replace placeholders in compose content
-                let composeForDeploy = selectedApp.docker_compose;
-                const generatedPasswords = {};
-                if (composeForDeploy.includes('__GENERATED_PASSWORD__')) {
-                    const pw = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-                        .map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 22);
-                    composeForDeploy = composeForDeploy.replaceAll('__GENERATED_PASSWORD__', pw);
-                    generatedPasswords.password = pw;
-                }
-                if (composeForDeploy.includes('__GENERATED_ROOT_PASSWORD__')) {
-                    const rpw = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-                        .map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 22);
-                    composeForDeploy = composeForDeploy.replaceAll('__GENERATED_ROOT_PASSWORD__', rpw);
-                    generatedPasswords.root_password = rpw;
-                }
 
-                const setupScript = `# Connect to your instance and run:
-ssh root@<INSTANCE_IP>
-
-# Then run these commands:
-apt update && apt install -y docker.io docker-compose
-echo '${btoa(composeForDeploy)}' | base64 -d > docker-compose.yml
-docker-compose up -d`;
+                let urlHtml = '';
+                if (deployData.public_url) {
+                    urlHtml = `
+                        <p style="margin-top:12px;font-weight:bold;color:var(--main1)">Public URL:</p>
+                        <code><a href="${escapeHtml(deployData.public_url)}" target="_blank" style="color:var(--main1);text-decoration:none;">${escapeHtml(deployData.public_url)}</a></code>
+                    `;
+                }
 
                 let credentialsHtml = '';
-                if (Object.keys(generatedPasswords).length > 0) {
+                const passwords = deployData.generated_passwords;
+                if (passwords && Object.keys(passwords).length > 0) {
                     credentialsHtml = '<p style="margin-top:16px;font-weight:bold;color:var(--main2)">Generated Credentials (save these!):</p>';
-                    if (generatedPasswords.password) {
-                        credentialsHtml += `<code>Password: ${generatedPasswords.password}</code>`;
+                    if (passwords.password) {
+                        credentialsHtml += `<code>Password: ${escapeHtml(passwords.password)}</code>`;
                     }
-                    if (generatedPasswords.root_password) {
-                        credentialsHtml += `<code>Root Password: ${generatedPasswords.root_password}</code>`;
+                    if (passwords.root_password) {
+                        credentialsHtml += `<code>Root Password: ${escapeHtml(passwords.root_password)}</code>`;
                     }
                 }
+
+                const sshCommand = `ssh -p ${sshPort} root@${escapeHtml(vmIp)}`;
 
                 document.getElementById('deploySuccess').innerHTML = `
                     <div class="success-panel">
-                        <h4>Instance Created Successfully!</h4>
-                        <p>Instance ID: <code>${instanceId}</code></p>
+                        <h4>Deployment Complete!</h4>
+                        ${urlHtml}
+                        <p style="margin-top:12px;font-weight:bold;">SSH Access:</p>
+                        <code>${sshCommand}</code>
+                        <button class="copy-btn" onclick="navigator.clipboard.writeText('${sshCommand}'); showToast('Copied!', 'success')">Copy SSH Command</button>
+                        <p style="margin-top:12px;font-weight:bold;">Instance ID:</p>
+                        <code>${escapeHtml(instanceId)}</code>
                         ${credentialsHtml}
-                        <p style="margin-top:12px">Your instance is being provisioned. Check the <a href="https://app.aleph.cloud/console/" target="_blank" style="color:var(--main1)">Aleph Console</a> for status and IP address.</p>
-                        <p style="margin-top:16px;font-weight:bold">Setup Commands:</p>
-                        <code>${setupScript}</code>
-                        <button class="copy-btn" onclick="navigator.clipboard.writeText(\`${setupScript.replace(/`/g, '\\`')}\`); showToast('Copied!', 'success')">Copy Commands</button>
                         <button class="btn-cancel" style="margin-top:16px;width:100%" onclick="closeModal()">Close</button>
                     </div>
                 `;
                 document.getElementById('deploySuccess').style.display = 'block';
-                
-                showToast('Instance created successfully!', 'success');
-                
+
+                showToast('Application deployed successfully!', 'success');
+
             } catch (err) {
                 console.error('Deploy error:', err);
                 const currentActive = document.querySelector('.deploy-step.active');
