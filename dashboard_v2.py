@@ -1147,23 +1147,36 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     resources: {
                         vcpus: selectedApp.requirements.vcpus,
                         memory: selectedApp.requirements.memory_mb,
+                        seconds: 30,
                     },
                     rootfs: {
-                        size_mib: selectedApp.requirements.disk_gb * 1024
+                        parent: {
+                            ref: '5330dcefe1857bcd97b7b7f24d1420a7d46232d53f27be280c8a7071d88bd84e',
+                            use_latest: true,
+                        },
+                        persistence: 'host',
+                        size_mib: selectedApp.requirements.disk_gb * 1024,
+                    },
+                    environment: {
+                        aleph_api: true,
+                        hypervisor: 'qemu',
+                        internet: true,
+                        reproducible: false,
+                        shared_cache: false,
                     },
                     metadata: {
                         name: instanceName,
                         app: selectedApp.id,
                         marketplace: 'aleph-marketplace'
                     },
-                    variables: {
-                        APP_NAME: selectedApp.name,
-                        APP_ID: selectedApp.id,
+                    requirements: {
+                        node: {
+                            node_hash: selectedCrn.hash,
+                        }
                     },
                     payment: {
                         chain: 'ETH',
                         type: window.AlephSDK.PaymentType.credit,
-                        receiver: selectedCrn.payment_address
                     }
                 };
 
