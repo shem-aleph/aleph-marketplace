@@ -349,7 +349,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .ssh-key-option:hover { border-color: var(--main0); }
         .ssh-key-option.selected { border-color: var(--main0); background: rgba(2, 154, 255, 0.1); }
-        .ssh-key-option input[type="radio"] { accent-color: var(--main0); flex-shrink: 0; }
+        .ssh-key-option input[type="radio"] { accent-color: var(--main0); flex-shrink: 0; width: auto; margin-bottom: 0; padding: 0; }
         .ssh-key-label { font-size: 13px; color: var(--white); }
         .ssh-key-preview { font-size: 11px; color: var(--text-muted); font-family: 'Source Code Pro', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 350px; }
         .ssh-key-loading { color: var(--text-muted); font-size: 13px; padding: 12px; text-align: center; }
