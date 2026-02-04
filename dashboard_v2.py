@@ -566,7 +566,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             
             <div class="wallet-section">
                 <span class="credit-badge" id="creditBadge">
-                    <span id="creditAmount">0</span> credits
+                    $<span id="creditAmount">0</span>
                 </span>
                 <div id="walletInfo" style="display: none;">
                     <span class="wallet-address" id="walletAddress"></span>
@@ -664,7 +664,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     <div id="customKeySection" style="margin-top: 4px;">
                         <div class="ssh-key-option" onclick="selectCustomKey()">
                             <input type="radio" name="sshKey" value="custom" id="sshKeyCustomRadio">
-                            <div>
+                            <div style="flex:1; min-width:0;">
                                 <div class="ssh-key-label">Paste a custom key</div>
                             </div>
                         </div>
@@ -749,7 +749,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const label = escapeHtml(key.label || 'SSH Key');
                 return '<div class="ssh-key-option ' + (i === 0 ? 'selected' : '') + '" onclick="selectSshKey(' + i + ')">'
                     + '<input type="radio" name="sshKey" value="' + i + '" ' + (i === 0 ? 'checked' : '') + '>'
-                    + '<div style="overflow:hidden;">'
+                    + '<div style="overflow:hidden; flex:1; min-width:0;">'
                     + '<div class="ssh-key-label">' + label + '</div>'
                     + '<div class="ssh-key-preview">' + escapeHtml(preview) + '</div>'
                     + '</div></div>';
@@ -804,15 +804,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const balance = data.credit_balance !== undefined ? data.credit_balance : data.balance;
 
                 if (balance !== null && balance !== undefined) {
-                    // credit_balance is in micro-units (1,000,000 = 1 credit)
+                    // credit_balance is in micro-units (1,000,000 = $1)
                     const credits = Number(balance) / 1000000;
-                    if (credits > 1000000) {
-                        amountEl.textContent = (credits / 1000000).toFixed(1) + 'M';
-                    } else if (credits > 1000) {
-                        amountEl.textContent = (credits / 1000).toFixed(1) + 'K';
-                    } else {
-                        amountEl.textContent = credits.toFixed(0);
-                    }
+                    amountEl.textContent = credits.toLocaleString('en-US', { maximumFractionDigits: 0 });
                     badge.style.display = 'inline-block';
 
                     if (credits < 100) {
