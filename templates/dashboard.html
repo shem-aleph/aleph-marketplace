@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aleph Cloud Marketplace</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        .header {
+            background: rgba(0,0,0,0.3);
+            padding: 20px 40px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .header-left h1 { color: #7B3FE4; font-size: 24px; }
+        .header-left p { color: #888; margin-top: 5px; }
+        .header-right { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .credit-badge {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid #4ade80;
+            color: #4ade80;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            display: none;
+        }
+        .credit-badge.warning {
+            border-color: #f59e0b;
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.1);
+        }
+        .wallet-btn {
+            background: linear-gradient(135deg, #7B3FE4 0%, #6930c3 100%);
+            color: #fff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .wallet-btn:hover { transform: scale(1.02); box-shadow: 0 4px 20px rgba(123, 63, 228, 0.4); }
+        .wallet-btn.connected { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .wallet-btn.connecting { background: #666; cursor: wait; }
+        .wallet-address {
+            color: #7B3FE4;
+            font-size: 14px;
+            background: rgba(123, 63, 228, 0.1);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: monospace;
+        }
+        .disconnect-btn {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .disconnect-btn:hover { background: #ef4444; color: #fff; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 30px; }
+        .auth-notice {
+            background: rgba(123, 63, 228, 0.1);
+            border: 1px solid #7B3FE4;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .auth-notice.hidden { display: none; }
+        .auth-notice h3 { color: #7B3FE4; margin-bottom: 10px; }
+        .auth-notice p { color: #888; }
+        .categories {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .category-btn {
+            background: rgba(123, 63, 228, 0.2);
+            border: 1px solid #7B3FE4;
+            color: #7B3FE4;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .category-btn:hover, .category-btn.active { background: #7B3FE4; color: #fff; }
+        .apps-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+        }
+        .app-card {
+            background: rgba(26, 26, 46, 0.8);
+            border: 1px solid #333;
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .app-card:hover { border-color: #7B3FE4; transform: translateY(-2px); }
+        .app-icon { font-size: 40px; margin-bottom: 15px; }
+        .app-name { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+        .app-desc { color: #888; font-size: 14px; line-height: 1.5; margin-bottom: 15px; }
+        .app-meta { display: flex; gap: 20px; font-size: 12px; color: #666; }
+        .app-meta span { display: flex; align-items: center; gap: 5px; }
+        .app-tags { display: flex; gap: 8px; margin-top: 15px; flex-wrap: wrap; }
+        .tag { background: rgba(212, 255, 0, 0.1); color: #D4FF00; padding: 4px 10px; border-radius: 12px; font-size: 11px; }
+        .deploy-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #7B3FE4 0%, #6930c3 100%);
+            color: #fff;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.2s;
+        }
+        .deploy-btn:hover { transform: scale(1.02); }
+        .deploy-btn:disabled { background: #666; cursor: not-allowed; transform: none; }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+        }
+        .modal.active { display: flex; }
+        .modal-content {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 550px;
+            width: 90%;
+            margin: 20px;
+        }
+        .modal h2 { color: #fff; margin-bottom: 20px; }
+        .modal label { display: block; color: #aaa; font-size: 12px; margin-bottom: 6px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .modal input, .modal select, .modal textarea {
+            width: 100%;
+            background: #0a0a0f;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            color: #fff;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .modal input:disabled, .modal select:disabled { background: #1a1a2e; color: #7B3FE4; }
+        .modal textarea { min-height: 80px; resize: vertical; font-family: monospace; font-size: 12px; }
+        .modal-btns { display: flex; gap: 10px; margin-top: 20px; }
+        .modal-btns button {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-cancel { background: #333; color: #fff; }
+        .btn-deploy { background: #7B3FE4; color: #fff; }
+        .btn-deploy:disabled { background: #666; cursor: not-allowed; }
+        
+        .price { color: #4ade80; font-weight: 600; }
+        .requirements { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .requirements h4 { color: #888; font-size: 12px; margin-bottom: 10px; }
+        .req-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center; }
+        .req-item { background: rgba(123, 63, 228, 0.1); padding: 10px; border-radius: 8px; }
+        .req-value { font-size: 18px; font-weight: bold; color: #7B3FE4; }
+        .req-label { font-size: 11px; color: #666; }
+        
+        /* SSH Key selector */
+        .ssh-key-section { margin-top: 15px; }
+        .ssh-key-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #333;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ssh-key-option:hover { border-color: #7B3FE4; }
+        .ssh-key-option.selected { border-color: #7B3FE4; background: rgba(123, 63, 228, 0.1); }
+        .ssh-key-option input[type="radio"] { accent-color: #7B3FE4; }
+        .ssh-key-label { font-size: 13px; color: #fff; }
+        .ssh-key-preview { font-size: 11px; color: #666; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
+        .ssh-key-loading { color: #888; font-size: 13px; padding: 10px; text-align: center; }
+        
+        /* Deploy status panel */
+        .deploy-status {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 15px;
+            display: none;
+        }
+        .deploy-status.visible { display: block; }
+        .status-step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 13px;
+        }
+        .status-step:last-child { border-bottom: none; }
+        .status-icon { width: 24px; text-align: center; }
+        .status-step.done .status-icon { color: #4ade80; }
+        .status-step.active .status-icon { color: #f59e0b; }
+        .status-step.error .status-icon { color: #ef4444; }
+        .status-step.pending .status-icon { color: #666; }
+        
+        .ssh-info-box {
+            background: rgba(123, 63, 228, 0.1);
+            border: 1px solid #7B3FE4;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .ssh-info-box code {
+            display: block;
+            margin: 4px 0;
+            color: #D4FF00;
+        }
+        
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 16px 24px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 2000;
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+        }
+        .toast.success { border-color: #10b981; }
+        .toast.error { border-color: #ef4444; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spinner { display: inline-block; animation: spin 1s linear infinite; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <h1>✦ Aleph Cloud Marketplace</h1>
+            <p>One-click deployment on decentralized infrastructure</p>
+        </div>
+        <div class="header-right">
+            <div class="credit-badge" id="creditBadge">
+                💰 <span id="creditAmount">0</span> credits
+            </div>
+            <div id="walletInfo" style="display: none;">
+                <span class="wallet-address" id="walletAddress"></span>
+            </div>
+            <button class="wallet-btn" id="connectBtn" onclick="handleWalletClick()">
+                <span id="connectBtnText">🦊 Connect Wallet</span>
+            </button>
+            <button class="disconnect-btn" id="disconnectBtn" style="display: none;" onclick="disconnectWallet()">
+                Disconnect
+            </button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="auth-notice" id="authNotice">
+            <h3>🔐 Connect Your Wallet</h3>
+            <p>Connect your Ethereum wallet to deploy applications on Aleph Cloud</p>
+        </div>
+        <div class="categories" id="categories"></div>
+        <div class="apps-grid" id="apps"></div>
+    </div>
+    
+    <!-- Deploy Modal -->
+    <div class="modal" id="deployModal">
+        <div class="modal-content">
+            <h2 id="modalTitle">Deploy App</h2>
+            <div id="modalApp"></div>
+            
+            <label>Wallet Address</label>
+            <input type="text" id="address" placeholder="Your Ethereum address (0x...)" readonly>
+            
+            <label>Instance Name</label>
+            <input type="text" id="instanceName" placeholder="Instance name (optional)">
+            
+            <!-- SSH Key Section -->
+            <div class="ssh-key-section">
+                <label>SSH Key</label>
+                <div id="sshKeyList">
+                    <div class="ssh-key-loading">Connect wallet to load SSH keys...</div>
+                </div>
+                <div id="customKeySection" style="margin-top: 8px;">
+                    <div class="ssh-key-option" onclick="selectCustomKey()">
+                        <input type="radio" name="sshKey" value="custom" id="sshKeyCustomRadio">
+                        <div>
+                            <div class="ssh-key-label">Paste a new key</div>
+                        </div>
+                    </div>
+                    <textarea id="customSshKey" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..." style="display: none;"></textarea>
+                </div>
+            </div>
+            
+            <!-- Credit Warning -->
+            <div id="creditWarning" style="display: none; margin-top: 12px; padding: 10px; background: rgba(245, 158, 11, 0.1); border: 1px solid #f59e0b; border-radius: 8px; font-size: 12px; color: #f59e0b;">
+                ⚠️ Your credit balance may be insufficient for this deployment.
+                <a href="https://console.aleph.cloud" target="_blank" style="color: #7B3FE4;">Top up credits →</a>
+            </div>
+            
+            <div class="modal-btns">
+                <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+                <button class="btn-deploy" id="deployBtn" onclick="confirmDeploy()">Deploy Now</button>
+            </div>
+            
+            <!-- Deploy Status -->
+            <div class="deploy-status" id="deployStatus">
+                <div id="deploySteps"></div>
+                <div class="ssh-info-box" id="sshInfoBox" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ============ State ============
+        let apps = [];
+        let categories = [];
+        let selectedApp = null;
+        let currentCategory = null;
+        let userSshKeys = [];
+        let selectedSshKey = null;
+        let userCredits = null;
+        
+        let walletState = {
+            connected: false,
+            authenticated: false,
+            address: null,
+            token: null,
+            provider: null,
+            signer: null
+        };
+        
+        // ============ Toast ============
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+        
+        // ============ Credits ============
+        async function fetchCredits(address) {
+            try {
+                const res = await fetch(`/api/credits/${address}`);
+                const data = await res.json();
+                userCredits = data;
+                
+                const badge = document.getElementById('creditBadge');
+                const amount = document.getElementById('creditAmount');
+                
+                if (data.credit_balance !== null && data.credit_balance !== undefined) {
+                    const credits = Number(data.credit_balance);
+                    if (credits > 1000000) {
+                        amount.textContent = (credits / 1000000).toFixed(1) + 'M';
+                    } else if (credits > 1000) {
+                        amount.textContent = (credits / 1000).toFixed(1) + 'K';
+                    } else {
+                        amount.textContent = credits.toFixed(0);
+                    }
+                    badge.style.display = 'block';
+                    
+                    if (credits < 100) {
+                        badge.classList.add('warning');
+                    } else {
+                        badge.classList.remove('warning');
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch credits:', e);
+            }
+        }
+        
+        // ============ SSH Keys ============
+        async function fetchSshKeys(address) {
+            try {
+                const res = await fetch(`/api/ssh-keys/${address}`);
+                const data = await res.json();
+                userSshKeys = data.keys || [];
+                renderSshKeys();
+            } catch (e) {
+                console.error('Failed to fetch SSH keys:', e);
+                userSshKeys = [];
+                renderSshKeys();
+            }
+        }
+        
+        function renderSshKeys() {
+            const container = document.getElementById('sshKeyList');
+            
+            if (userSshKeys.length === 0) {
+                container.innerHTML = '<div class="ssh-key-loading">No SSH keys found on Aleph network. Paste one below.</div>';
+                return;
+            }
+            
+            container.innerHTML = userSshKeys.map((key, i) => {
+                const preview = key.key.substring(0, 40) + '...';
+                return `
+                    <div class="ssh-key-option ${i === 0 ? 'selected' : ''}" onclick="selectSshKey(${i})">
+                        <input type="radio" name="sshKey" value="${i}" ${i === 0 ? 'checked' : ''}>
+                        <div style="overflow: hidden;">
+                            <div class="ssh-key-label">🔑 ${escapeHtml(key.label)}</div>
+                            <div class="ssh-key-preview">${escapeHtml(preview)}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            if (userSshKeys.length > 0) {
+                selectedSshKey = userSshKeys[0].key;
+            }
+        }
+        
+        function selectSshKey(index) {
+            document.querySelectorAll('.ssh-key-option').forEach(el => el.classList.remove('selected'));
+            const options = document.querySelectorAll('#sshKeyList .ssh-key-option');
+            if (options[index]) {
+                options[index].classList.add('selected');
+                options[index].querySelector('input').checked = true;
+            }
+            document.getElementById('sshKeyCustomRadio').checked = false;
+            document.getElementById('customSshKey').style.display = 'none';
+            selectedSshKey = userSshKeys[index].key;
+        }
+        
+        function selectCustomKey() {
+            document.querySelectorAll('.ssh-key-option').forEach(el => el.classList.remove('selected'));
+            const customOption = document.querySelector('#customKeySection .ssh-key-option');
+            customOption.classList.add('selected');
+            document.getElementById('sshKeyCustomRadio').checked = true;
+            document.getElementById('customSshKey').style.display = 'block';
+            selectedSshKey = null; // Will be read from textarea on deploy
+        }
+        
+        function getSelectedSshKey() {
+            if (document.getElementById('sshKeyCustomRadio').checked) {
+                return document.getElementById('customSshKey').value.trim();
+            }
+            return selectedSshKey;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // ============ Wallet ============
+        async function handleWalletClick() {
+            if (walletState.authenticated) return;
+            if (walletState.connected) {
+                await authenticateWallet();
+            } else {
+                await connectWallet();
+            }
+        }
+        
+        async function connectWallet() {
+            const connectBtn = document.getElementById('connectBtn');
+            const connectBtnText = document.getElementById('connectBtnText');
+            
+            if (typeof window.ethereum === 'undefined') {
+                showToast('Please install MetaMask or another Web3 wallet', 'error');
+                return;
+            }
+            
+            try {
+                connectBtn.classList.add('connecting');
+                connectBtnText.textContent = 'Connecting...';
+                
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const accounts = await provider.send('eth_requestAccounts', []);
+                if (accounts.length === 0) throw new Error('No accounts found');
+                
+                const signer = await provider.getSigner();
+                const address = await signer.getAddress();
+                
+                walletState.provider = provider;
+                walletState.signer = signer;
+                walletState.address = address;
+                walletState.connected = true;
+                
+                await authenticateWallet();
+            } catch (error) {
+                console.error('Connection error:', error);
+                showToast(error.message || 'Failed to connect wallet', 'error');
+                resetWalletUI();
+            }
+        }
+        
+        async function authenticateWallet() {
+            const connectBtn = document.getElementById('connectBtn');
+            const connectBtnText = document.getElementById('connectBtnText');
+            
+            try {
+                connectBtnText.textContent = 'Authenticating...';
+                
+                const nonceRes = await fetch('/api/auth/nonce', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address: walletState.address })
+                });
+                if (!nonceRes.ok) throw new Error((await nonceRes.json()).detail || 'Failed to get nonce');
+                const { nonce, message } = await nonceRes.json();
+                
+                connectBtnText.textContent = 'Sign message...';
+                const signature = await walletState.signer.signMessage(message);
+                
+                connectBtnText.textContent = 'Verifying...';
+                const verifyRes = await fetch('/api/auth/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address: walletState.address, signature, nonce })
+                });
+                if (!verifyRes.ok) throw new Error((await verifyRes.json()).detail || 'Verification failed');
+                
+                const { token } = await verifyRes.json();
+                walletState.token = token;
+                walletState.authenticated = true;
+                localStorage.setItem('aleph_auth_token', token);
+                localStorage.setItem('aleph_auth_address', walletState.address);
+                
+                updateWalletUI();
+                showToast('Wallet connected!', 'success');
+                
+                // Fetch credits and SSH keys in parallel
+                fetchCredits(walletState.address);
+                fetchSshKeys(walletState.address);
+                
+            } catch (error) {
+                console.error('Auth error:', error);
+                showToast(error.code === 4001 ? 'Signature request cancelled' : (error.message || 'Auth failed'), 'error');
+                walletState.connected = false;
+                resetWalletUI();
+            }
+        }
+        
+        async function disconnectWallet() {
+            if (walletState.token) {
+                try { await fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${walletState.token}` } }); } catch (e) {}
+            }
+            walletState = { connected: false, authenticated: false, address: null, token: null, provider: null, signer: null };
+            localStorage.removeItem('aleph_auth_token');
+            localStorage.removeItem('aleph_auth_address');
+            userCredits = null;
+            userSshKeys = [];
+            selectedSshKey = null;
+            resetWalletUI();
+            document.getElementById('creditBadge').style.display = 'none';
+            showToast('Wallet disconnected', 'info');
+        }
+        
+        function updateWalletUI() {
+            const connectBtn = document.getElementById('connectBtn');
+            const connectBtnText = document.getElementById('connectBtnText');
+            
+            connectBtn.classList.remove('connecting');
+            connectBtn.classList.add('connected');
+            connectBtnText.textContent = '✓ Connected';
+            
+            const shortAddr = walletState.address.slice(0, 6) + '...' + walletState.address.slice(-4);
+            document.getElementById('walletAddress').textContent = shortAddr;
+            document.getElementById('walletInfo').style.display = 'block';
+            document.getElementById('disconnectBtn').style.display = 'block';
+            document.getElementById('authNotice').classList.add('hidden');
+            document.getElementById('address').value = walletState.address;
+            
+            renderApps(); // Re-render to enable deploy buttons
+        }
+        
+        function resetWalletUI() {
+            const connectBtn = document.getElementById('connectBtn');
+            const connectBtnText = document.getElementById('connectBtnText');
+            connectBtn.classList.remove('connecting', 'connected');
+            connectBtnText.textContent = '🦊 Connect Wallet';
+            document.getElementById('walletInfo').style.display = 'none';
+            document.getElementById('disconnectBtn').style.display = 'none';
+            document.getElementById('authNotice').classList.remove('hidden');
+            document.getElementById('address').value = '';
+            renderApps();
+        }
+        
+        // ============ Session Recovery ============
+        async function checkExistingSession() {
+            const token = localStorage.getItem('aleph_auth_token');
+            const address = localStorage.getItem('aleph_auth_address');
+            if (!token || !address) return;
+            
+            try {
+                const res = await fetch('/api/auth/session', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (res.ok) {
+                    const session = await res.json();
+                    if (session.authenticated) {
+                        walletState.token = token;
+                        walletState.address = session.address;
+                        walletState.authenticated = true;
+                        walletState.connected = true;
+                        
+                        if (typeof window.ethereum !== 'undefined') {
+                            try {
+                                const provider = new ethers.BrowserProvider(window.ethereum);
+                                const accounts = await provider.listAccounts();
+                                if (accounts.length > 0 && accounts[0].address.toLowerCase() === session.address.toLowerCase()) {
+                                    walletState.provider = provider;
+                                    walletState.signer = accounts[0];
+                                }
+                            } catch (e) {}
+                        }
+                        
+                        updateWalletUI();
+                        fetchCredits(walletState.address);
+                        fetchSshKeys(walletState.address);
+                    }
+                }
+            } catch (e) {
+                localStorage.removeItem('aleph_auth_token');
+                localStorage.removeItem('aleph_auth_address');
+            }
+        }
+        
+        // ============ Apps ============
+        async function loadApps() {
+            const res = await fetch('/api/apps');
+            const data = await res.json();
+            apps = data.apps;
+            categories = data.categories;
+            renderCategories();
+            renderApps();
+        }
+        
+        function renderCategories() {
+            const container = document.getElementById('categories');
+            container.innerHTML = `
+                <button class="category-btn ${!currentCategory ? 'active' : ''}" onclick="filterCategory(null)">All Apps</button>
+                ${categories.map(c => `
+                    <button class="category-btn ${currentCategory === c.id ? 'active' : ''}" onclick="filterCategory('${c.id}')">
+                        ${c.icon} ${c.name}
+                    </button>
+                `).join('')}
+            `;
+        }
+        
+        function filterCategory(cat) {
+            currentCategory = cat;
+            renderCategories();
+            renderApps();
+        }
+        
+        function renderApps() {
+            const container = document.getElementById('apps');
+            const filtered = currentCategory ? apps.filter(a => a.category === currentCategory) : apps;
+            
+            container.innerHTML = filtered.map(app => `
+                <div class="app-card" onclick="openDeploy('${app.id}')">
+                    <div class="app-icon">${app.icon}</div>
+                    <div class="app-name">${app.name}</div>
+                    <div class="app-desc">${app.description}</div>
+                    <div class="app-meta">
+                        <span>💰 <span class="price">~$${app.estimated_cost_per_day.toFixed(2)}/day</span></span>
+                        <span>💾 ${app.requirements.disk_gb}GB</span>
+                        <span>🧠 ${app.requirements.memory_mb}MB</span>
+                    </div>
+                    <div class="app-tags">
+                        ${app.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+                    </div>
+                    <button class="deploy-btn" ${!walletState.authenticated ? 'disabled' : ''}>
+                        ${walletState.authenticated ? 'Deploy →' : '🔒 Connect to Deploy'}
+                    </button>
+                </div>
+            `).join('');
+        }
+        
+        function openDeploy(appId) {
+            if (!walletState.authenticated) {
+                showToast('Please connect your wallet first', 'error');
+                return;
+            }
+            
+            selectedApp = apps.find(a => a.id === appId);
+            document.getElementById('modalTitle').textContent = `Deploy ${selectedApp.name}`;
+            document.getElementById('address').value = walletState.address;
+            document.getElementById('modalApp').innerHTML = `
+                <div class="requirements">
+                    <h4>REQUIREMENTS</h4>
+                    <div class="req-grid">
+                        <div class="req-item">
+                            <div class="req-value">${selectedApp.requirements.vcpus}</div>
+                            <div class="req-label">vCPUs</div>
+                        </div>
+                        <div class="req-item">
+                            <div class="req-value">${selectedApp.requirements.memory_mb}</div>
+                            <div class="req-label">MB RAM</div>
+                        </div>
+                        <div class="req-item">
+                            <div class="req-value">${selectedApp.requirements.disk_gb}</div>
+                            <div class="req-label">GB Disk</div>
+                        </div>
+                    </div>
+                </div>
+                <p style="color: #4ade80; text-align: center; margin: 15px 0;">
+                    Estimated cost: ~$${selectedApp.estimated_cost_per_day.toFixed(2)}/day
+                </p>
+            `;
+            
+            // Show credit warning if balance seems low
+            const warning = document.getElementById('creditWarning');
+            if (userCredits && userCredits.credit_balance !== null) {
+                warning.style.display = userCredits.credit_balance < 100 ? 'block' : 'none';
+            } else {
+                warning.style.display = 'none';
+            }
+            
+            // Reset deploy status
+            document.getElementById('deployStatus').classList.remove('visible');
+            document.getElementById('sshInfoBox').style.display = 'none';
+            document.getElementById('deployBtn').disabled = false;
+            document.getElementById('deployBtn').textContent = 'Deploy Now';
+            
+            // Re-render SSH keys
+            renderSshKeys();
+            
+            document.getElementById('deployModal').classList.add('active');
+        }
+        
+        function closeModal() {
+            document.getElementById('deployModal').classList.remove('active');
+            selectedApp = null;
+        }
+        
+        async function confirmDeploy() {
+            if (!walletState.authenticated) {
+                showToast('Please connect your wallet first', 'error');
+                return;
+            }
+            
+            const sshKey = getSelectedSshKey();
+            if (!sshKey) {
+                showToast('Please select or paste an SSH public key', 'error');
+                return;
+            }
+            
+            // Validate SSH key format
+            if (!sshKey.startsWith('ssh-') && !sshKey.startsWith('ecdsa-')) {
+                showToast('Invalid SSH key format. Should start with ssh-rsa, ssh-ed25519, etc.', 'error');
+                return;
+            }
+            
+            const deployBtn = document.getElementById('deployBtn');
+            deployBtn.disabled = true;
+            deployBtn.textContent = 'Deploying...';
+            
+            // Show status panel
+            const statusPanel = document.getElementById('deployStatus');
+            statusPanel.classList.add('visible');
+            updateDeploySteps([
+                { name: 'Submitting deployment request...', status: 'active' },
+                { name: 'Creating instance', status: 'pending' },
+                { name: 'Waiting for VM IP', status: 'pending' },
+                { name: 'Deploying application', status: 'pending' },
+            ]);
+            
+            try {
+                const res = await fetch('/api/deploy', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${walletState.token}`
+                    },
+                    body: JSON.stringify({
+                        app_id: selectedApp.id,
+                        address: walletState.address,
+                        instance_name: document.getElementById('instanceName').value || null,
+                        ssh_pubkey: sshKey,
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) throw new Error(data.detail || 'Deployment failed');
+                
+                if (data.status === 'instance_created') {
+                    // Instance created, now polling for IP in background
+                    showToast('Instance created! Waiting for VM to start...', 'success');
+                    updateDeploySteps([
+                        { name: 'Deployment submitted', status: 'done' },
+                        { name: 'Instance created: ' + (data.instance_hash || '').substring(0, 12) + '...', status: 'done' },
+                        { name: 'Waiting for VM IP (this may take a few minutes)...', status: 'active' },
+                        { name: 'Deploy application', status: 'pending' },
+                    ]);
+                    
+                    // Poll deployment status
+                    pollDeploymentStatus(data.deployment_id);
+                    
+                } else if (data.status === 'awaiting_instance') {
+                    showToast('Manual instance creation required', 'info');
+                    updateDeploySteps([
+                        { name: 'Deployment submitted', status: 'done' },
+                        { name: 'Instance creation: manual setup needed', status: 'error' },
+                    ]);
+                    deployBtn.disabled = false;
+                    deployBtn.textContent = 'Deploy Now';
+                    
+                } else {
+                    showToast(`Deployment status: ${data.status}`, 'success');
+                    deployBtn.textContent = 'Deployed';
+                }
+                
+            } catch (error) {
+                showToast(error.message || 'Deployment failed', 'error');
+                updateDeploySteps([
+                    { name: 'Deployment failed: ' + error.message, status: 'error' },
+                ]);
+                deployBtn.disabled = false;
+                deployBtn.textContent = 'Retry';
+            }
+        }
+        
+        function updateDeploySteps(steps) {
+            const container = document.getElementById('deploySteps');
+            container.innerHTML = steps.map(s => {
+                let icon = '⏳';
+                if (s.status === 'done') icon = '✅';
+                else if (s.status === 'active') icon = '<span class="spinner">⏳</span>';
+                else if (s.status === 'error') icon = '❌';
+                else if (s.status === 'pending') icon = '⬜';
+                
+                return `<div class="status-step ${s.status}">
+                    <span class="status-icon">${icon}</span>
+                    <span>${s.name}</span>
+                </div>`;
+            }).join('');
+        }
+        
+        async function pollDeploymentStatus(deploymentId) {
+            const maxPolls = 60; // 5 minutes at 5s intervals
+            
+            for (let i = 0; i < maxPolls; i++) {
+                await new Promise(r => setTimeout(r, 5000));
+                
+                try {
+                    const res = await fetch(`/api/deployments/${deploymentId}`);
+                    if (!res.ok) continue;
+                    
+                    const data = await res.json();
+                    const status = data.status;
+                    
+                    if (status === 'waiting_for_ip') {
+                        updateDeploySteps([
+                            { name: 'Deployment submitted', status: 'done' },
+                            { name: 'Instance created', status: 'done' },
+                            { name: 'Polling for VM IP...', status: 'active' },
+                            { name: 'Deploy application', status: 'pending' },
+                        ]);
+                    } else if (status === 'deploying_app') {
+                        const sshInfo = data.ssh_info || {};
+                        updateDeploySteps([
+                            { name: 'Deployment submitted', status: 'done' },
+                            { name: 'Instance created', status: 'done' },
+                            { name: `VM IP: ${sshInfo.ipv4 || sshInfo.ipv6 || 'found'}`, status: 'done' },
+                            { name: 'Deploying application via SSH...', status: 'active' },
+                        ]);
+                    } else if (status === 'running') {
+                        const sshInfo = data.ssh_info || {};
+                        const steps = [
+                            { name: 'Deployment submitted', status: 'done' },
+                            { name: 'Instance created', status: 'done' },
+                            { name: `VM IP: ${sshInfo.ipv4 || sshInfo.ipv6 || 'found'}`, status: 'done' },
+                            { name: 'Application deployed!', status: 'done' },
+                        ];
+                        if (data.public_url) {
+                            steps.push({ name: `Public URL: ${data.public_url}`, status: 'done' });
+                        }
+                        updateDeploySteps(steps);
+                        
+                        // Show SSH info
+                        showSshInfo(sshInfo, data.public_url);
+                        showToast('Application deployed successfully! 🎉', 'success');
+                        
+                        document.getElementById('deployBtn').textContent = '✅ Deployed';
+                        return;
+                        
+                    } else if (status === 'ip_timeout') {
+                        updateDeploySteps([
+                            { name: 'Deployment submitted', status: 'done' },
+                            { name: 'Instance created', status: 'done' },
+                            { name: 'VM IP retrieval timed out', status: 'error' },
+                        ]);
+                        showToast('VM IP retrieval timed out. The VM may still be starting.', 'error');
+                        document.getElementById('deployBtn').disabled = false;
+                        document.getElementById('deployBtn').textContent = 'Retry';
+                        return;
+                        
+                    } else if (status === 'deploy_failed') {
+                        const sshInfo = data.ssh_info || {};
+                        updateDeploySteps([
+                            { name: 'Deployment submitted', status: 'done' },
+                            { name: 'Instance created', status: 'done' },
+                            { name: `VM IP: ${sshInfo.ipv4 || sshInfo.ipv6 || 'found'}`, status: 'done' },
+                            { name: 'Application deployment failed', status: 'error' },
+                        ]);
+                        showSshInfo(sshInfo);
+                        showToast('App deploy failed. You can SSH in manually.', 'error');
+                        document.getElementById('deployBtn').disabled = false;
+                        document.getElementById('deployBtn').textContent = 'Retry';
+                        return;
+                        
+                    } else if (status === 'error') {
+                        updateDeploySteps([
+                            { name: 'Deployment error: ' + (data.error || 'Unknown'), status: 'error' },
+                        ]);
+                        document.getElementById('deployBtn').disabled = false;
+                        document.getElementById('deployBtn').textContent = 'Retry';
+                        return;
+                    }
+                } catch (e) {
+                    console.error('Poll error:', e);
+                }
+            }
+            
+            showToast('Deployment status polling timed out', 'error');
+            document.getElementById('deployBtn').disabled = false;
+            document.getElementById('deployBtn').textContent = 'Check Status';
+        }
+        
+        function showSshInfo(sshInfo, publicUrl) {
+            const box = document.getElementById('sshInfoBox');
+            let html = '<strong>🖥️ Connection Details</strong><br>';
+            
+            if (sshInfo.host) {
+                const host = sshInfo.ipv6 && !sshInfo.ipv4 ? `[${sshInfo.host}]` : sshInfo.host;
+                html += `<code>ssh -p ${sshInfo.port || 22} root@${host}</code>`;
+            }
+            if (sshInfo.ipv4) {
+                html += `<br>IPv4: <code>${sshInfo.ipv4}</code>`;
+            }
+            if (sshInfo.ipv6) {
+                html += `<br>IPv6: <code>${sshInfo.ipv6}</code>`;
+            }
+            if (sshInfo.mapped_ports && Object.keys(sshInfo.mapped_ports).length > 0) {
+                html += '<br><strong>Port Mappings:</strong>';
+                for (const [port, info] of Object.entries(sshInfo.mapped_ports)) {
+                    const hostPort = typeof info === 'object' ? info.host : info;
+                    html += `<br><code>:${port} → :${hostPort}</code>`;
+                }
+            }
+            if (publicUrl) {
+                html += `<br><br><strong>🌐 Public URL:</strong><br><a href="${publicUrl}" target="_blank" style="color: #7B3FE4;">${publicUrl}</a>`;
+            }
+            
+            box.innerHTML = html;
+            box.style.display = 'block';
+        }
+        
+        // ============ Event Listeners ============
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    disconnectWallet();
+                } else if (walletState.address && accounts[0].toLowerCase() !== walletState.address.toLowerCase()) {
+                    disconnectWallet();
+                    showToast('Account changed. Please reconnect.', 'info');
+                }
+            });
+            window.ethereum.on('chainChanged', () => window.location.reload());
+        }
+        
+        // ============ Init ============
+        async function init() {
+            await checkExistingSession();
+            await loadApps();
+        }
+        init();
+    </script>
+</body>
+</html>

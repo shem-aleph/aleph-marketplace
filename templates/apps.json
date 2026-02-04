@@ -1,0 +1,440 @@
+{
+  "apps": [
+    {
+      "id": "wordpress",
+      "name": "WordPress",
+      "description": "The world's most popular CMS. Create blogs, websites, and more.",
+      "category": "web",
+      "icon": "\ud83d\udcdd",
+      "tags": [
+        "cms",
+        "blog",
+        "website"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  wordpress:\n    image: wordpress:latest\n    ports:\n      - '80:80'\n    environment:\n      WORDPRESS_DB_HOST: db\n      WORDPRESS_DB_USER: wordpress\n      WORDPRESS_DB_PASSWORD: wordpress\n      WORDPRESS_DB_NAME: wordpress\n    volumes:\n      - wordpress_data:/var/www/html\n    restart: unless-stopped\n  db:\n    image: mysql:8.0\n    environment:\n      MYSQL_DATABASE: wordpress\n      MYSQL_USER: wordpress\n      MYSQL_PASSWORD: wordpress\n      MYSQL_ROOT_PASSWORD: rootpassword\n    volumes:\n      - db_data:/var/lib/mysql\n    restart: unless-stopped\nvolumes:\n  wordpress_data:\n  db_data:",
+      "estimated_cost_per_day": 0.68
+    },
+    {
+      "id": "ghost",
+      "name": "Ghost",
+      "description": "Modern publishing platform for creating blogs and newsletters.",
+      "category": "web",
+      "icon": "\ud83d\udc7b",
+      "tags": [
+        "blog",
+        "publishing",
+        "newsletter"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 1024,
+        "disk_gb": 10
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  ghost:\n    image: ghost:5-alpine\n    ports:\n      - '80:2368'\n    environment:\n      url: http://localhost\n    volumes:\n      - ghost_data:/var/lib/ghost/content\n    restart: unless-stopped\nvolumes:\n  ghost_data:",
+      "estimated_cost_per_day": 0.34
+    },
+    {
+      "id": "gitea",
+      "name": "Gitea",
+      "description": "Lightweight self-hosted Git service. Your own GitHub.",
+      "category": "devtools",
+      "icon": "\ud83c\udf75",
+      "tags": [
+        "git",
+        "code",
+        "devops"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 1024,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  gitea:\n    image: gitea/gitea:latest\n    ports:\n      - '80:3000'\n      - '22:22'\n    volumes:\n      - gitea_data:/data\n    restart: unless-stopped\nvolumes:\n  gitea_data:",
+      "estimated_cost_per_day": 0.34
+    },
+    {
+      "id": "code-server",
+      "name": "Code Server",
+      "description": "VS Code in the browser. Code from anywhere.",
+      "category": "devtools",
+      "icon": "\ud83d\udcbb",
+      "tags": [
+        "ide",
+        "vscode",
+        "development"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  code-server:\n    image: codercom/code-server:latest\n    ports:\n      - '80:8080'\n    environment:\n      PASSWORD: changeme\n    volumes:\n      - code_data:/home/coder\n    restart: unless-stopped\nvolumes:\n  code_data:",
+      "estimated_cost_per_day": 0.68
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "description": "Run large language models locally. Self-hosted AI.",
+      "category": "ai",
+      "icon": "\ud83e\udd99",
+      "tags": [
+        "ai",
+        "llm",
+        "ml"
+      ],
+      "requirements": {
+        "vcpus": 4,
+        "memory_mb": 8192,
+        "disk_gb": 50
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  ollama:\n    image: ollama/ollama:latest\n    ports:\n      - '11434:11434'\n    volumes:\n      - ollama_data:/root/.ollama\n    restart: unless-stopped\nvolumes:\n  ollama_data:",
+      "estimated_cost_per_day": 2.72
+    },
+    {
+      "id": "postgres",
+      "name": "PostgreSQL",
+      "description": "Powerful open-source relational database.",
+      "category": "database",
+      "icon": "\ud83d\udc18",
+      "tags": [
+        "database",
+        "sql",
+        "relational"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 1024,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  postgres:\n    image: postgres:16-alpine\n    ports:\n      - '5432:5432'\n    environment:\n      POSTGRES_PASSWORD: changeme\n      POSTGRES_DB: main\n    volumes:\n      - pg_data:/var/lib/postgresql/data\n    restart: unless-stopped\nvolumes:\n  pg_data:",
+      "estimated_cost_per_day": 0.34
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "description": "In-memory data store for caching and messaging.",
+      "category": "database",
+      "icon": "\ud83d\udd34",
+      "tags": [
+        "database",
+        "cache",
+        "nosql"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 512,
+        "disk_gb": 5
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  redis:\n    image: redis:alpine\n    ports:\n      - '6379:6379'\n    volumes:\n      - redis_data:/data\n    command: redis-server --appendonly yes\n    restart: unless-stopped\nvolumes:\n  redis_data:",
+      "estimated_cost_per_day": 0.17
+    },
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "description": "Self-hosted monitoring tool like Upptime or StatusPage.",
+      "category": "monitoring",
+      "icon": "\ud83d\udcc8",
+      "tags": [
+        "monitoring",
+        "uptime",
+        "status"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 512,
+        "disk_gb": 5
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  uptime-kuma:\n    image: louislam/uptime-kuma:latest\n    ports:\n      - '80:3001'\n    volumes:\n      - kuma_data:/app/data\n    restart: unless-stopped\nvolumes:\n  kuma_data:",
+      "estimated_cost_per_day": 0.17
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "description": "Workflow automation tool. Self-hosted Zapier alternative.",
+      "category": "automation",
+      "icon": "\u26a1",
+      "tags": [
+        "automation",
+        "workflow",
+        "integration"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 1024,
+        "disk_gb": 10
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  n8n:\n    image: n8nio/n8n:latest\n    ports:\n      - '80:5678'\n    environment:\n      N8N_BASIC_AUTH_ACTIVE: 'true'\n      N8N_BASIC_AUTH_USER: admin\n      N8N_BASIC_AUTH_PASSWORD: changeme\n    volumes:\n      - n8n_data:/home/node/.n8n\n    restart: unless-stopped\nvolumes:\n  n8n_data:",
+      "estimated_cost_per_day": 0.34
+    },
+    {
+      "id": "minio",
+      "name": "MinIO",
+      "description": "S3-compatible object storage. Self-hosted AWS S3.",
+      "category": "storage",
+      "icon": "\ud83d\udce6",
+      "tags": [
+        "storage",
+        "s3",
+        "object"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 50
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  minio:\n    image: minio/minio:latest\n    ports:\n      - '9000:9000'\n      - '9001:9001'\n    environment:\n      MINIO_ROOT_USER: admin\n      MINIO_ROOT_PASSWORD: changeme123\n    volumes:\n      - minio_data:/data\n    command: server /data --console-address ':9001'\n    restart: unless-stopped\nvolumes:\n  minio_data:",
+      "estimated_cost_per_day": 0.68
+    },
+    {
+      "id": "nextcloud",
+      "name": "Nextcloud",
+      "description": "Self-hosted productivity platform. Files, calendar, contacts, and collaboration.",
+      "category": "productivity",
+      "icon": "\u2601\ufe0f",
+      "tags": [
+        "files",
+        "collaboration",
+        "office",
+        "calendar",
+        "sync"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 50
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  nextcloud:\n    image: nextcloud:latest\n    ports:\n      - '80:80'\n    environment:\n      MYSQL_HOST: db\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: nextcloud\n      NEXTCLOUD_ADMIN_USER: admin\n      NEXTCLOUD_ADMIN_PASSWORD: changeme\n    volumes:\n      - nextcloud_data:/var/www/html\n    depends_on:\n      - db\n    restart: unless-stopped\n  db:\n    image: mariadb:10.11\n    environment:\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: nextcloud\n      MYSQL_ROOT_PASSWORD: rootpassword\n    volumes:\n      - db_data:/var/lib/mysql\n    restart: unless-stopped\nvolumes:\n  nextcloud_data:\n  db_data:",
+      "estimated_cost_per_day": 0.85
+    },
+    {
+      "id": "vaultwarden",
+      "name": "Vaultwarden",
+      "description": "Lightweight Bitwarden-compatible password manager. Secure credential storage.",
+      "category": "security",
+      "icon": "\ud83d\udd10",
+      "tags": [
+        "passwords",
+        "security",
+        "bitwarden",
+        "vault"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 512,
+        "disk_gb": 5
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  vaultwarden:\n    image: vaultwarden/server:latest\n    ports:\n      - '80:80'\n    environment:\n      DOMAIN: https://vault.example.com\n      SIGNUPS_ALLOWED: 'true'\n      ADMIN_TOKEN: changeme_generate_random_token\n    volumes:\n      - vaultwarden_data:/data\n    restart: unless-stopped\nvolumes:\n  vaultwarden_data:",
+      "estimated_cost_per_day": 0.17
+    },
+    {
+      "id": "grafana-prometheus",
+      "name": "Grafana + Prometheus",
+      "description": "Full monitoring stack. Metrics collection and beautiful dashboards.",
+      "category": "monitoring",
+      "icon": "\ud83d\udcca",
+      "tags": [
+        "monitoring",
+        "metrics",
+        "dashboards",
+        "alerting",
+        "observability"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  prometheus:\n    image: prom/prometheus:latest\n    ports:\n      - '9090:9090'\n    volumes:\n      - prometheus_data:/prometheus\n      - ./prometheus.yml:/etc/prometheus/prometheus.yml\n    command:\n      - '--config.file=/etc/prometheus/prometheus.yml'\n      - '--storage.tsdb.path=/prometheus'\n    restart: unless-stopped\n  grafana:\n    image: grafana/grafana:latest\n    ports:\n      - '80:3000'\n    environment:\n      GF_SECURITY_ADMIN_USER: admin\n      GF_SECURITY_ADMIN_PASSWORD: changeme\n      GF_USERS_ALLOW_SIGN_UP: 'false'\n    volumes:\n      - grafana_data:/var/lib/grafana\n    depends_on:\n      - prometheus\n    restart: unless-stopped\nvolumes:\n  prometheus_data:\n  grafana_data:",
+      "estimated_cost_per_day": 0.68
+    },
+    {
+      "id": "jupyter",
+      "name": "Jupyter Notebook",
+      "description": "Interactive computing environment for data science and ML experimentation.",
+      "category": "ai",
+      "icon": "\ud83d\udcd3",
+      "tags": [
+        "datascience",
+        "python",
+        "notebook",
+        "ml",
+        "analytics"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 4096,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  jupyter:\n    image: jupyter/datascience-notebook:latest\n    ports:\n      - '80:8888'\n    environment:\n      JUPYTER_TOKEN: changeme\n      JUPYTER_ENABLE_LAB: 'yes'\n    volumes:\n      - jupyter_data:/home/jovyan/work\n    restart: unless-stopped\nvolumes:\n  jupyter_data:",
+      "estimated_cost_per_day": 1.02
+    },
+    {
+      "id": "portainer",
+      "name": "Portainer",
+      "description": "Docker management UI. Visualize and manage containers easily.",
+      "category": "infrastructure",
+      "icon": "\ud83d\udc33",
+      "tags": [
+        "docker",
+        "containers",
+        "management",
+        "devops"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 512,
+        "disk_gb": 5
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  portainer:\n    image: portainer/portainer-ce:latest\n    ports:\n      - '80:9000'\n      - '9443:9443'\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - portainer_data:/data\n    restart: unless-stopped\nvolumes:\n  portainer_data:",
+      "estimated_cost_per_day": 0.17
+    },
+    {
+      "id": "traefik",
+      "name": "Traefik",
+      "description": "Modern reverse proxy and load balancer. Auto SSL with Let's Encrypt.",
+      "category": "infrastructure",
+      "icon": "\ud83d\udd00",
+      "tags": [
+        "proxy",
+        "loadbalancer",
+        "ssl",
+        "routing",
+        "ingress"
+      ],
+      "requirements": {
+        "vcpus": 1,
+        "memory_mb": 512,
+        "disk_gb": 5
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  traefik:\n    image: traefik:v3.0\n    ports:\n      - '80:80'\n      - '443:443'\n      - '8080:8080'\n    command:\n      - '--api.insecure=true'\n      - '--providers.docker=true'\n      - '--providers.docker.exposedbydefault=false'\n      - '--entrypoints.web.address=:80'\n      - '--entrypoints.websecure.address=:443'\n      - '--certificatesresolvers.letsencrypt.acme.httpchallenge=true'\n      - '--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web'\n      - '--certificatesresolvers.letsencrypt.acme.email=admin@example.com'\n      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n      - traefik_certs:/letsencrypt\n    restart: unless-stopped\nvolumes:\n  traefik_certs:",
+      "estimated_cost_per_day": 0.17
+    },
+    {
+      "id": "immich",
+      "name": "Immich",
+      "description": "Self-hosted photo and video backup. Google Photos alternative with ML features.",
+      "category": "media",
+      "icon": "\ud83d\udcf8",
+      "tags": [
+        "photos",
+        "backup",
+        "gallery",
+        "ai",
+        "memories"
+      ],
+      "requirements": {
+        "vcpus": 4,
+        "memory_mb": 4096,
+        "disk_gb": 100
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  immich-server:\n    image: ghcr.io/immich-app/immich-server:release\n    ports:\n      - '80:3001'\n    environment:\n      DB_HOSTNAME: database\n      DB_USERNAME: postgres\n      DB_PASSWORD: postgres\n      DB_DATABASE_NAME: immich\n      REDIS_HOSTNAME: redis\n    volumes:\n      - upload_data:/usr/src/app/upload\n    depends_on:\n      - redis\n      - database\n    restart: unless-stopped\n  immich-machine-learning:\n    image: ghcr.io/immich-app/immich-machine-learning:release\n    volumes:\n      - model_cache:/cache\n    restart: unless-stopped\n  redis:\n    image: redis:6.2-alpine\n    restart: unless-stopped\n  database:\n    image: tensorchord/pgvecto-rs:pg14-v0.2.0\n    environment:\n      POSTGRES_PASSWORD: postgres\n      POSTGRES_USER: postgres\n      POSTGRES_DB: immich\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n    restart: unless-stopped\nvolumes:\n  upload_data:\n  model_cache:\n  pgdata:",
+      "estimated_cost_per_day": 1.7
+    },
+    {
+      "id": "paperless-ngx",
+      "name": "Paperless-ngx",
+      "description": "Document management system with OCR. Go paperless with smart organization.",
+      "category": "productivity",
+      "icon": "\ud83d\udcc4",
+      "tags": [
+        "documents",
+        "ocr",
+        "archive",
+        "scanning",
+        "organization"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 30
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  paperless:\n    image: ghcr.io/paperless-ngx/paperless-ngx:latest\n    ports:\n      - '80:8000'\n    environment:\n      PAPERLESS_REDIS: redis://redis:6379\n      PAPERLESS_DBHOST: db\n      PAPERLESS_DBNAME: paperless\n      PAPERLESS_DBUSER: paperless\n      PAPERLESS_DBPASS: paperless\n      PAPERLESS_ADMIN_USER: admin\n      PAPERLESS_ADMIN_PASSWORD: changeme\n      PAPERLESS_OCR_LANGUAGE: eng\n    volumes:\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n      - paperless_export:/usr/src/paperless/export\n      - paperless_consume:/usr/src/paperless/consume\n    depends_on:\n      - db\n      - redis\n    restart: unless-stopped\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_DB: paperless\n      POSTGRES_USER: paperless\n      POSTGRES_PASSWORD: paperless\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n    restart: unless-stopped\n  redis:\n    image: redis:7\n    restart: unless-stopped\nvolumes:\n  paperless_data:\n  paperless_media:\n  paperless_export:\n  paperless_consume:\n  pgdata:",
+      "estimated_cost_per_day": 0.68
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "description": "Run your own AI assistant with Claude. Personal AI agent with tools, memory, and integrations.",
+      "category": "ai",
+      "icon": "\ud83e\udd9e",
+      "tags": [
+        "ai",
+        "assistant",
+        "claude",
+        "agent",
+        "automation"
+      ],
+      "requirements": {
+        "vcpus": 2,
+        "memory_mb": 2048,
+        "disk_gb": 20
+      },
+      "docker_compose": "version: '3.8'\nservices:\n  openclaw:\n    image: node:22-slim\n    working_dir: /app\n    ports:\n      - '3000:3000'\n    environment:\n      ANTHROPIC_API_KEY: your-api-key-here\n    volumes:\n      - openclaw_data:/app/data\n    command: >\n      bash -c \"npm install -g openclaw && openclaw gateway start\"\n    restart: unless-stopped\nvolumes:\n  openclaw_data:",
+      "estimated_cost_per_day": 0.68,
+      "setup_notes": "Requires Anthropic API key. Set ANTHROPIC_API_KEY environment variable.",
+      "docs_url": "https://docs.openclaw.ai"
+    }
+  ],
+  "categories": [
+    {
+      "id": "web",
+      "name": "Web Apps",
+      "icon": "\ud83c\udf10"
+    },
+    {
+      "id": "devtools",
+      "name": "Dev Tools",
+      "icon": "\ud83d\udee0\ufe0f"
+    },
+    {
+      "id": "ai",
+      "name": "AI & ML",
+      "icon": "\ud83e\udd16"
+    },
+    {
+      "id": "database",
+      "name": "Databases",
+      "icon": "\ud83d\udcbe"
+    },
+    {
+      "id": "monitoring",
+      "name": "Monitoring",
+      "icon": "\ud83d\udcca"
+    },
+    {
+      "id": "automation",
+      "name": "Automation",
+      "icon": "\u26a1"
+    },
+    {
+      "id": "storage",
+      "name": "Storage",
+      "icon": "\ud83d\udce6"
+    },
+    {
+      "id": "productivity",
+      "name": "Productivity",
+      "icon": "\u2705"
+    },
+    {
+      "id": "security",
+      "name": "Security",
+      "icon": "\ud83d\udd12"
+    },
+    {
+      "id": "infrastructure",
+      "name": "Infrastructure",
+      "icon": "\ud83c\udfd7\ufe0f"
+    },
+    {
+      "id": "media",
+      "name": "Media",
+      "icon": "\ud83c\udfac"
+    }
+  ]
+}
