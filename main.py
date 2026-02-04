@@ -862,19 +862,20 @@ async def list_crns():
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                "https://scheduler.api.aleph.cloud/api/v0/allocation/resource_nodes"
+                "https://crns-list.aleph.sh/crns.json"
             )
             if response.status_code == 200:
                 data = response.json()
                 crns = []
-                for node in data.get("resource_nodes", []):
-                    if (node.get("status") == "active" and
-                            node.get("payment_receiver_address")):
+                for node in data.get("crns", []):
+                    if (node.get("payment_receiver_address") and
+                            node.get("qemu_support")):
                         crns.append({
                             "hash": node.get("hash"),
                             "name": node.get("name"),
                             "url": node.get("address"),
                             "payment_address": node.get("payment_receiver_address"),
+                            "stream_reward": node.get("stream_reward"),
                             "score": node.get("score", 0),
                         })
                 crns.sort(key=lambda x: x.get("score", 0), reverse=True)
