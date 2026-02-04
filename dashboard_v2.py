@@ -22,12 +22,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <script type="importmap">
     {
         "imports": {
-            "@aleph-sdk/client": "https://esm.sh/@aleph-sdk/client@1.1.0",
-            "@aleph-sdk/ethereum": "https://esm.sh/@aleph-sdk/ethereum@1.1.0",
-            "@aleph-sdk/evm": "https://esm.sh/@aleph-sdk/evm@1.0.1",
-            "@aleph-sdk/message": "https://esm.sh/@aleph-sdk/message@1.1.0",
-            "@aleph-sdk/account": "https://esm.sh/@aleph-sdk/account@1.0.1",
-            "@aleph-sdk/core": "https://esm.sh/@aleph-sdk/core@1.1.0"
+            "@aleph-sdk/client": "https://esm.sh/@aleph-sdk/client@1.4.5",
+            "@aleph-sdk/ethereum": "https://esm.sh/@aleph-sdk/ethereum@1.5.0",
+            "@aleph-sdk/evm": "https://esm.sh/@aleph-sdk/evm@1.6.2",
+            "@aleph-sdk/message": "https://esm.sh/@aleph-sdk/message@1.6.3",
+            "@aleph-sdk/account": "https://esm.sh/@aleph-sdk/account@1.2.0",
+            "@aleph-sdk/core": "https://esm.sh/@aleph-sdk/core@1.6.2"
         }
     }
     </script>
@@ -1103,7 +1103,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     },
                     payment: {
                         chain: 'ETH',
-                        type: window.AlephSDK.PaymentType.hold
+                        type: window.AlephSDK.PaymentType.credit
                     }
                 };
                 
