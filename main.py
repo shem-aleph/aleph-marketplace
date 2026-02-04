@@ -776,39 +776,53 @@ async def get_ssh_keys(address: str):
                     "addresses": address,
                     "types": "ALEPH-SSH",
                     "channels": "ALEPH-CLOUDSOLUTIONS",
+                    "pagination": 50,
+                    "page": 1,
                 }
             )
             if response.status_code == 200:
                 data = response.json()
-                posts = data.get("posts", [])
                 keys = []
-                for post in posts:
+                for post in data.get("posts", []):
                     content = post.get("content", {})
                     ssh_key = content.get("key", "")
                     label = content.get("label", content.get("name", "Unnamed Key"))
                     if ssh_key:
-                        keys.append({"key": ssh_key, "label": label})
-                return {"address": address, "keys": keys}
+                        keys.append({
+                            "key": ssh_key,
+                            "label": label,
+                            "hash": post.get("item_hash", ""),
+                            "time": post.get("time"),
+                        })
+                return {
+                    "address": address,
+                    "keys": keys,
+                    "total": data.get("pagination_total", len(keys)),
+                }
     except Exception as e:
         pass
-    return {"address": address, "keys": []}
+    return {"address": address, "keys": [], "error": "Could not fetch SSH keys"}
 
 
 @app.get("/api/credits/{address}")
 async def get_credits(address: str):
-    """Get credit balance for an address"""
+    """Get credit balance for an address from the Aleph network"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                "https://api.aleph.cloud/api/v1/credits/balance",
-                params={"address": address}
+                f"https://api2.aleph.im/api/v0/addresses/{address}/balance"
             )
             if response.status_code == 200:
                 data = response.json()
-                return {"address": address, "balance": data.get("balance", 0)}
+                return {
+                    "address": address,
+                    "balance": data.get("balance", 0),
+                    "credit_balance": data.get("credit_balance", 0),
+                    "locked_amount": data.get("locked_amount", 0),
+                }
     except Exception as e:
         pass
-    return {"address": address, "balance": None, "error": "Could not fetch balance"}
+    return {"address": address, "balance": None, "credit_balance": None, "error": "Could not fetch balance"}
 
 
 # ============ Static Files & Dashboard ============

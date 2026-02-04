@@ -801,7 +801,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 const badge = document.getElementById('creditBadge');
                 const amountEl = document.getElementById('creditAmount');
-                const balance = data.balance;
+                const balance = data.credit_balance !== undefined ? data.credit_balance : data.balance;
 
                 if (balance !== null && balance !== undefined) {
                     const credits = Number(balance);
