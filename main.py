@@ -11,13 +11,19 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 import httpx
 
-from deployer import deploy as deploy_to_aleph, orchestrator, AlephDeployer
+from deployer import deploy as deploy_to_aleph, orchestrator
+from dashboard_v2 import DASHBOARD_HTML
+from ssh_executor import SSHExecutor, DeploymentTracker
+from security import (
+    sanitize_app_name, validate_eth_address, validate_ssh_host, validate_port,
+    rate_limiter, require_eth_account, extract_token
+)
 
 # Try to import eth_account for signature verification
 try:
@@ -30,7 +36,7 @@ except ImportError:
 app = FastAPI(
     title="Aleph Cloud Marketplace",
     description="One-click deployment of applications on Aleph Cloud",
-    version="0.2.0"
+    version="0.1.0"
 )
 
 # Load app templates
@@ -41,17 +47,21 @@ with open(TEMPLATES_PATH) as f:
 APPS = {app["id"]: app for app in APP_DATA["apps"]}
 CATEGORIES = APP_DATA["categories"]
 
-# In-memory deployments
+# In-memory deployments (would use persistent storage in production)
 DEPLOYMENTS = {}
 
-# ============ Web3 Auth Storage ============
-AUTH_NONCES = {}
-AUTH_SESSIONS = {}
-SESSION_EXPIRY_SECONDS = 86400
-NONCE_EXPIRY_SECONDS = 300
+# Persistent deployment tracker
+deployment_tracker = DeploymentTracker("/tmp/marketplace_deployments.json")
 
-# Aleph API base
-ALEPH_API_URL = "https://api2.aleph.im/api/v0"
+# ============ Web3 Auth Storage ============
+# Nonce storage: {address: {nonce: str, created_at: float}}
+AUTH_NONCES = {}
+# Session storage: {token: {address: str, created_at: float, expires_at: float}}
+AUTH_SESSIONS = {}
+# Session expiry: 24 hours
+SESSION_EXPIRY_SECONDS = 86400
+# Nonce expiry: 5 minutes
+NONCE_EXPIRY_SECONDS = 300
 
 
 class SSHInfo(BaseModel):
@@ -62,10 +72,9 @@ class SSHInfo(BaseModel):
 
 class DeployRequest(BaseModel):
     app_id: str
-    address: str
+    address: str  # Ethereum address for deployment
     instance_name: Optional[str] = None
-    ssh_info: Optional[SSHInfo] = None
-    ssh_pubkey: Optional[str] = None
+    ssh_info: Optional[SSHInfo] = None  # If provided, deploy to existing instance
 
 
 class Deployment(BaseModel):
@@ -73,7 +82,7 @@ class Deployment(BaseModel):
     app_id: str
     address: str
     instance_name: str
-    status: str
+    status: str  # pending, deploying, running, failed, stopped
     created_at: str
     instance_hash: Optional[str] = None
     ssh_info: Optional[dict] = None
@@ -110,6 +119,7 @@ class SessionInfo(BaseModel):
 # ============ Auth Helper Functions ============
 
 def cleanup_expired_nonces():
+    """Remove expired nonces"""
     now = time.time()
     expired = [addr for addr, data in AUTH_NONCES.items() 
                if now - data["created_at"] > NONCE_EXPIRY_SECONDS]
@@ -118,6 +128,7 @@ def cleanup_expired_nonces():
 
 
 def cleanup_expired_sessions():
+    """Remove expired sessions"""
     now = time.time()
     expired = [token for token, data in AUTH_SESSIONS.items() 
                if now > data["expires_at"]]
@@ -126,19 +137,30 @@ def cleanup_expired_sessions():
 
 
 def generate_nonce() -> str:
+    """Generate a cryptographically secure nonce"""
     return secrets.token_hex(16)
 
 
 def generate_session_token() -> str:
+    """Generate a session token"""
     return secrets.token_urlsafe(32)
 
 
 def verify_signature(address: str, message: str, signature: str) -> bool:
+    """Verify an Ethereum signature"""
     if not ETH_ACCOUNT_AVAILABLE:
-        return True
+        # SECURITY: Do NOT accept signatures without proper verification
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication unavailable: eth_account library not installed"
+        )
+    
     try:
+        # Encode the message as per EIP-191
         message_encoded = encode_defunct(text=message)
+        # Recover the address from the signature
         recovered_address = Account.recover_message(message_encoded, signature=signature)
+        # Compare addresses (case-insensitive)
         return recovered_address.lower() == address.lower()
     except Exception as e:
         print(f"Signature verification failed: {e}")
@@ -146,6 +168,7 @@ def verify_signature(address: str, message: str, signature: str) -> bool:
 
 
 def get_session_from_token(token: str) -> Optional[dict]:
+    """Get session data from token, returns None if invalid/expired"""
     cleanup_expired_sessions()
     if token not in AUTH_SESSIONS:
         return None
@@ -159,188 +182,129 @@ def get_session_from_token(token: str) -> Optional[dict]:
 # ============ Auth API Routes ============
 
 @app.post("/api/auth/nonce", response_model=NonceResponse)
-async def get_auth_nonce(request: NonceRequest):
+async def get_auth_nonce(request: NonceRequest, req: Request):
+    """Generate a nonce for wallet signing"""
+    # SECURITY: Rate limit nonce requests
+    rate_limiter.check(
+        rate_limiter.get_client_key(req, "nonce"), 
+        max_requests=20, 
+        window_seconds=60
+    )
+    
     cleanup_expired_nonces()
-    address = request.address.lower()
-    if not address.startswith("0x") or len(address) != 42:
-        raise HTTPException(status_code=400, detail="Invalid Ethereum address")
+    
+    # SECURITY: Validate address format properly
+    address = validate_eth_address(request.address)
     
     nonce = generate_nonce()
     message = f"Sign this message to authenticate with Aleph Marketplace.\n\nNonce: {nonce}\nAddress: {address}"
     
-    AUTH_NONCES[address] = {"nonce": nonce, "created_at": time.time()}
+    AUTH_NONCES[address] = {
+        "nonce": nonce,
+        "created_at": time.time()
+    }
+    
     return NonceResponse(nonce=nonce, message=message)
 
 
 @app.post("/api/auth/verify", response_model=VerifyResponse)
-async def verify_auth(request: VerifyRequest):
-    cleanup_expired_nonces()
-    address = request.address.lower()
+async def verify_auth(request: VerifyRequest, req: Request):
+    """Verify a signed message and return a session token"""
+    # SECURITY: Rate limit verification attempts
+    rate_limiter.check(
+        rate_limiter.get_client_key(req, "verify"), 
+        max_requests=10, 
+        window_seconds=60
+    )
     
+    cleanup_expired_nonces()
+    
+    # SECURITY: Validate address format
+    address = validate_eth_address(request.address)
+    
+    # Check if nonce exists and is valid
     if address not in AUTH_NONCES:
-        raise HTTPException(status_code=400, detail="No pending nonce. Request a new nonce.")
+        raise HTTPException(status_code=400, detail="No pending nonce for this address. Request a new nonce.")
     
     stored_nonce = AUTH_NONCES[address]
     
+    # Check nonce expiry
     if time.time() - stored_nonce["created_at"] > NONCE_EXPIRY_SECONDS:
         del AUTH_NONCES[address]
-        raise HTTPException(status_code=400, detail="Nonce expired.")
+        raise HTTPException(status_code=400, detail="Nonce expired. Request a new nonce.")
     
+    # Check nonce matches
     if stored_nonce["nonce"] != request.nonce:
         raise HTTPException(status_code=400, detail="Invalid nonce")
     
+    # Construct the expected message
     expected_message = f"Sign this message to authenticate with Aleph Marketplace.\n\nNonce: {request.nonce}\nAddress: {address}"
     
+    # Verify signature
     if not verify_signature(address, expected_message, request.signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
     
+    # Remove used nonce
     del AUTH_NONCES[address]
     
+    # Create session
     token = generate_session_token()
     expires_at = time.time() + SESSION_EXPIRY_SECONDS
-    AUTH_SESSIONS[token] = {"address": address, "created_at": time.time(), "expires_at": expires_at}
+    
+    AUTH_SESSIONS[token] = {
+        "address": address,
+        "created_at": time.time(),
+        "expires_at": expires_at
+    }
     
     return VerifyResponse(token=token, address=address, expires_at=expires_at)
 
 
 @app.get("/api/auth/session", response_model=SessionInfo)
 async def get_session_info(authorization: Optional[str] = Header(None)):
+    """Get current session info"""
     if not authorization:
         return SessionInfo(address="", authenticated=False)
+    
+    # Extract token from "Bearer <token>" format
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    
     session = get_session_from_token(token)
     if not session:
         return SessionInfo(address="", authenticated=False)
-    return SessionInfo(address=session["address"], authenticated=True, expires_at=session["expires_at"])
+    
+    return SessionInfo(
+        address=session["address"],
+        authenticated=True,
+        expires_at=session["expires_at"]
+    )
 
 
 @app.post("/api/auth/logout")
 async def logout(authorization: Optional[str] = Header(None)):
+    """Logout and invalidate session"""
     if not authorization:
         return {"success": True}
+    
     token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    
     if token in AUTH_SESSIONS:
         del AUTH_SESSIONS[token]
+    
     return {"success": True}
 
 
-# ============ Credits API ============
-
-@app.get("/api/credits/{address}")
-async def get_credits(address: str):
-    """Get credit balance for an address from the Aleph network."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{ALEPH_API_URL}/addresses/{address}/balance"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "address": address,
-                    "balance": data.get("balance", 0),
-                    "credit_balance": data.get("credit_balance", 0),
-                    "locked_amount": data.get("locked_amount", 0),
-                }
-    except Exception as e:
-        pass
-    return {"address": address, "balance": None, "credit_balance": None, "error": "Could not fetch balance"}
-
-
-# ============ SSH Keys API ============
-
-@app.get("/api/ssh-keys/{address}")
-async def get_ssh_keys(address: str):
-    """
-    Fetch user's SSH keys stored on the Aleph network.
-    These are POST messages of type ALEPH-SSH in channel ALEPH-CLOUDSOLUTIONS.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(
-                f"{ALEPH_API_URL}/posts.json",
-                params={
-                    "addresses": address,
-                    "types": "ALEPH-SSH",
-                    "channels": "ALEPH-CLOUDSOLUTIONS",
-                    "pagination": 50,
-                    "page": 1,
-                }
-            )
-            if response.status_code == 200:
-                data = response.json()
-                keys = []
-                for post in data.get("posts", []):
-                    content = post.get("content", {})
-                    key_data = content.get("key", "")
-                    label = content.get("label", "Unnamed Key")
-                    if key_data:
-                        keys.append({
-                            "key": key_data,
-                            "label": label,
-                            "hash": post.get("item_hash", ""),
-                            "time": post.get("time"),
-                        })
-                return {
-                    "address": address,
-                    "keys": keys,
-                    "total": data.get("pagination_total", len(keys)),
-                }
-    except Exception as e:
-        pass
-    return {"address": address, "keys": [], "error": "Could not fetch SSH keys"}
-
-
-# ============ Allocation Status API ============
-
-@app.get("/api/allocation/{instance_hash}")
-async def get_allocation_status(instance_hash: str):
-    """
-    Get VM allocation info including IP addresses from the scheduler and CRN.
-    """
-    deployer = AlephDeployer()
-    
-    result = {
-        "instance_hash": instance_hash,
-        "status": "checking",
-    }
-    
-    # Check scheduler allocation
-    allocation = await deployer.get_allocation(instance_hash)
-    if allocation:
-        result["allocation"] = allocation
-        result["vm_ipv6"] = allocation.get("vm_ipv6")
-        
-        node = allocation.get("node", {})
-        crn_url = node.get("url") or node.get("address")
-        
-        if crn_url:
-            result["crn_url"] = crn_url
-            # Get full networking from CRN
-            networking = await deployer.get_vm_networking_from_crn(crn_url, instance_hash)
-            if networking:
-                result["networking"] = networking
-                result["status"] = "allocated"
-            else:
-                result["status"] = "allocated_no_networking"
-        else:
-            result["status"] = "allocated"
-    else:
-        result["status"] = "not_allocated"
-    
-    return result
-
-
-# ============ App Routes ============
+# ============ API Routes ============
 
 @app.get("/")
 async def home():
-    """Serve the marketplace frontend (dashboard)."""
-    return await dashboard()
+    """Serve the marketplace frontend"""
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 @app.get("/api/apps")
 async def list_apps(category: Optional[str] = None):
+    """List all available apps"""
     apps = list(APPS.values())
     if category:
         apps = [a for a in apps if a["category"] == category]
@@ -349,29 +313,43 @@ async def list_apps(category: Optional[str] = None):
 
 @app.get("/api/apps/{app_id}")
 async def get_app(app_id: str):
+    """Get details for a specific app"""
     if app_id not in APPS:
         raise HTTPException(status_code=404, detail="App not found")
     return APPS[app_id]
 
 
 @app.post("/api/deploy")
-async def deploy_app(request: DeployRequest, background_tasks: BackgroundTasks):
-    """Deploy an app. If SSH pubkey provided, will create instance and auto-deploy."""
+async def deploy_app(request: DeployRequest, authorization: Optional[str] = Header(None)):
+    """Deploy an app to Aleph Cloud"""
+    # Require authentication
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    # Verify the address matches the authenticated session
+    if session["address"].lower() != request.address.lower():
+        raise HTTPException(status_code=403, detail="Address mismatch")
+    
     if request.app_id not in APPS:
         raise HTTPException(status_code=404, detail="App not found")
     
-    app_config = APPS[request.app_id]
-    ssh_info = request.ssh_info.dict() if request.ssh_info else None
+    app = APPS[request.app_id]
     
+    # Use the real deployer
+    ssh_info = request.ssh_info.dict() if request.ssh_info else None
     result = await deploy_to_aleph(
-        app=app_config,
+        app=app,
         address=request.address,
-        instance_name=request.instance_name or f"{app_config['name']} Instance",
-        ssh_info=ssh_info,
-        ssh_pubkey=request.ssh_pubkey,
+        instance_name=request.instance_name or f"{app['name']} Instance",
+        ssh_info=ssh_info
     )
     
-    # Store deployment
+    # Store in deployments
     DEPLOYMENTS[result["deployment_id"]] = {
         **result,
         "app_id": request.app_id,
@@ -380,59 +358,58 @@ async def deploy_app(request: DeployRequest, background_tasks: BackgroundTasks):
         "created_at": datetime.utcnow().isoformat()
     }
     
-    # If instance was created, start background polling for IP + auto-deploy
-    if result.get("status") == "instance_created" and result.get("instance_hash"):
-        background_tasks.add_task(
-            _background_poll_and_deploy,
-            deployment_id=result["deployment_id"],
-            app=app_config,
-            instance_hash=result["instance_hash"],
-            crn_url=result.get("crn_url"),
-        )
-    
     return result
 
 
-async def _background_poll_and_deploy(
-    deployment_id: str, app: dict, instance_hash: str, crn_url: Optional[str]
-):
-    """Background task to poll for VM IP and deploy the app."""
-    try:
-        result = await orchestrator.poll_and_deploy(
-            deployment_id=deployment_id,
-            app=app,
-            instance_hash=instance_hash,
-            crn_url=crn_url,
-        )
-        # Update stored deployment
-        if deployment_id in DEPLOYMENTS:
-            DEPLOYMENTS[deployment_id].update(result)
-    except Exception as e:
-        if deployment_id in DEPLOYMENTS:
-            DEPLOYMENTS[deployment_id]["status"] = "error"
-            DEPLOYMENTS[deployment_id]["error"] = str(e)
-
-
 @app.post("/api/deploy/execute")
-async def execute_deployment(deployment_id: str, ssh_info: SSHInfo):
-    """Execute deployment on an existing instance via SSH."""
+async def execute_deployment(
+    deployment_id: str, 
+    ssh_info: SSHInfo,
+    authorization: Optional[str] = Header(None)
+):
+    """Execute deployment on an instance (requires SSH access)"""
+    # SECURITY: Require authentication
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = extract_token(authorization)
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
     if deployment_id not in orchestrator.deployments:
         raise HTTPException(status_code=404, detail="Deployment not found")
     
     deployment = orchestrator.deployments[deployment_id]
+    
+    # SECURITY: Verify ownership
+    if deployment.get("address", "").lower() != session["address"].lower():
+        raise HTTPException(status_code=403, detail="Not your deployment")
+    
+    # SECURITY: Validate SSH host
+    try:
+        validate_ssh_host(ssh_info.host)
+        validate_port(ssh_info.port)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Get the app
     app_name = deployment_id.split("-")[0]
     if app_name not in APPS:
         raise HTTPException(status_code=404, detail="App not found")
     
-    app_config = APPS[app_name]
+    app = APPS[app_name]
+    
+    # Generate execution commands
+    from deployer import AlephDeployer
     deployer = AlephDeployer()
     
     compose_result = await deployer.deploy_docker_compose(
         ssh_host=ssh_info.host,
         ssh_port=ssh_info.port,
         ssh_user=ssh_info.user,
-        compose_content=app_config["docker_compose"],
-        app_name=app_config["id"]
+        compose_content=app["docker_compose"],
+        app_name=app["id"]
     )
     
     tunnel_result = await deployer.setup_cloudflare_tunnel(
@@ -447,39 +424,372 @@ async def execute_deployment(deployment_id: str, ssh_info: SSHInfo):
         "ssh_connection": f"ssh -p {ssh_info.port} {ssh_info.user}@{ssh_info.host}",
         "deploy_script": compose_result["deploy_script"],
         "tunnel_script": tunnel_result["tunnel_script"],
+        "instructions": [
+            f"1. Connect: ssh -p {ssh_info.port} {ssh_info.user}@{ssh_info.host}",
+            "2. Copy and run the deploy_script",
+            "3. Copy and run the tunnel_script to get your public URL"
+        ]
     }
 
 
-@app.get("/api/deployments")
-async def list_deployments(address: Optional[str] = None):
-    deployments = list(DEPLOYMENTS.values())
-    if address:
-        deployments = [d for d in deployments if d.get("address", "").lower() == address.lower()]
+class SSHDeployRequest(BaseModel):
+    app_id: str
+    ssh_host: str
+    ssh_port: int = 22
+    ssh_user: str = "root"
+    setup_tunnel: bool = True
+    tunnel_port: Optional[int] = None  # Auto-detect from docker-compose if not specified
+
+
+def get_host_port_from_compose(compose_content: str) -> int:
+    """Extract the first exposed host port from docker-compose"""
+    import re
+    # Match patterns like '80:3000', '8080:80', etc.
+    port_pattern = r"['\"]?(\d+):(\d+)['\"]?"
+    matches = re.findall(port_pattern, compose_content)
+    if matches:
+        return int(matches[0][0])  # Return the host port (first number)
+    return 80  # Default to 80
+
+
+@app.post("/api/deploy/ssh")
+async def deploy_via_ssh(
+    request: SSHDeployRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Deploy an app to an existing instance via SSH.
+    Actually executes the deployment (not just generates scripts).
+    """
+    # Require authentication
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    address = session["address"]
+    
+    if request.app_id not in APPS:
+        raise HTTPException(status_code=404, detail="App not found")
+    
+    app = APPS[request.app_id]
+    
+    # SECURITY: Validate SSH host to prevent SSRF
+    try:
+        validated_host = validate_ssh_host(request.ssh_host)
+        validate_port(request.ssh_port)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Create SSH executor
+    executor = SSHExecutor(
+        host=validated_host,
+        port=request.ssh_port,
+        user=request.ssh_user
+    )
+    
+    # Test connection first
+    if not await executor.test_connection():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot connect to {request.ssh_user}@{request.ssh_host}:{request.ssh_port}. "
+                   "Check SSH access and try again."
+        )
+    
+    # Create deployment record
+    deployment_id = f"{request.app_id}-{address[:8]}-{int(time.time())}"
+    deployment = deployment_tracker.add_deployment(
+        deployment_id=deployment_id,
+        address=address,
+        app_id=request.app_id,
+        app_name=app["name"],
+        ssh_host=request.ssh_host,
+        ssh_port=request.ssh_port,
+        status="deploying"
+    )
+    
+    # Deploy the app
+    deploy_result = await executor.deploy_compose(
+        app_name=request.app_id,
+        compose_content=app["docker_compose"]
+    )
+    
+    if deploy_result["status"] != "running":
+        deployment_tracker.update_deployment(
+            deployment_id,
+            status="failed",
+            error=deploy_result.get("error")
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Deployment failed: {deploy_result.get('error', 'Unknown error')}"
+        )
+    
+    # Update deployment status
+    deployment_tracker.update_deployment(
+        deployment_id,
+        status="running",
+        containers=deploy_result.get("containers", [])
+    )
+    
+    result = {
+        "deployment_id": deployment_id,
+        "app_name": app["name"],
+        "status": "running",
+        "ssh_host": request.ssh_host,
+        "ssh_port": request.ssh_port,
+        "containers": deploy_result.get("containers", []),
+        "app_directory": f"/root/apps/{request.app_id}",
+    }
+    
+    # Set up tunnel if requested
+    if request.setup_tunnel:
+        # Auto-detect port from docker-compose if not specified
+        tunnel_port = request.tunnel_port
+        if tunnel_port is None:
+            tunnel_port = get_host_port_from_compose(app["docker_compose"])
+        tunnel_result = await executor.setup_tunnel(tunnel_port)
+        if tunnel_result.get("url"):
+            deployment_tracker.update_deployment(
+                deployment_id,
+                public_url=tunnel_result["url"]
+            )
+            result["public_url"] = tunnel_result["url"]
+        result["tunnel"] = tunnel_result
+    
+    return result
+
+
+@app.get("/api/deployments/my")
+async def get_my_deployments(authorization: Optional[str] = Header(None)):
+    """Get all deployments for the authenticated user"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    deployments = deployment_tracker.get_deployments_by_address(session["address"])
     return {"deployments": deployments}
 
 
+@app.get("/api/deployments/{deployment_id}/status")
+async def get_deployment_status(deployment_id: str, authorization: Optional[str] = Header(None)):
+    """Get live status of a deployment by checking containers"""
+    deployment = deployment_tracker.get_deployment(deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    
+    # Create executor to check status
+    executor = SSHExecutor(
+        host=deployment["ssh_host"],
+        port=deployment["ssh_port"],
+        user="root"
+    )
+    
+    # Test connection
+    if not await executor.test_connection():
+        return {
+            "deployment_id": deployment_id,
+            "status": "unreachable",
+            "error": "Cannot connect to instance"
+        }
+    
+    # Get app status
+    status = await executor.get_app_status(deployment["app_id"])
+    
+    # Update tracker
+    deployment_tracker.update_deployment(
+        deployment_id,
+        status=status["status"],
+        containers=status.get("containers", [])
+    )
+    
+    return {
+        "deployment_id": deployment_id,
+        **status,
+        "ssh_host": deployment["ssh_host"],
+        "public_url": deployment.get("public_url")
+    }
+
+
+@app.post("/api/deployments/{deployment_id}/stop")
+async def stop_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
+    """Stop a running deployment"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    deployment = deployment_tracker.get_deployment(deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    
+    # Verify ownership
+    if deployment["address"] != session["address"].lower():
+        raise HTTPException(status_code=403, detail="Not your deployment")
+    
+    executor = SSHExecutor(
+        host=deployment["ssh_host"],
+        port=deployment["ssh_port"],
+        user="root"
+    )
+    
+    result = await executor.stop_app(deployment["app_id"])
+    
+    deployment_tracker.update_deployment(deployment_id, status="stopped")
+    
+    return {"deployment_id": deployment_id, **result}
+
+
+@app.delete("/api/deployments/{deployment_id}")
+async def delete_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
+    """Delete a deployment completely"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    deployment = deployment_tracker.get_deployment(deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    
+    # Verify ownership
+    if deployment["address"] != session["address"].lower():
+        raise HTTPException(status_code=403, detail="Not your deployment")
+    
+    executor = SSHExecutor(
+        host=deployment["ssh_host"],
+        port=deployment["ssh_port"],
+        user="root"
+    )
+    
+    result = await executor.remove_app(deployment["app_id"])
+    
+    deployment_tracker.remove_deployment(deployment_id)
+    
+    return {"deployment_id": deployment_id, **result}
+
+
+@app.get("/api/instances/{address}")
+async def get_instances(address: str):
+    """Get all Aleph instances for an address"""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                "https://api2.aleph.im/api/v0/messages.json",
+                params={
+                    "addresses": address,
+                    "message_type": "INSTANCE",
+                    "pagination": 100
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                messages = data.get("messages", [])
+                
+                instances = []
+                for msg in messages:
+                    content = msg.get("content", {})
+                    instances.append({
+                        "item_hash": msg.get("item_hash"),
+                        "name": content.get("metadata", {}).get("name", "unnamed"),
+                        "resources": content.get("resources", {}),
+                        "payment": content.get("payment", {}),
+                        "created": msg.get("time"),
+                    })
+                
+                return {"address": address, "instances": instances, "count": len(instances)}
+    except Exception as e:
+        pass
+    
+    return {"address": address, "instances": [], "error": "Could not fetch instances"}
+
+
+@app.get("/api/deployments")
+async def list_deployments(authorization: Optional[str] = Header(None)):
+    """List deployments for authenticated user only"""
+    # SECURITY: Require authentication
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = extract_token(authorization)
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    # Only return user's own deployments
+    user_deployments = [
+        d for d in DEPLOYMENTS.values() 
+        if d.get("address", "").lower() == session["address"].lower()
+    ]
+    return {"deployments": user_deployments}
+
+
 @app.get("/api/deployments/{deployment_id}")
-async def get_deployment(deployment_id: str):
+async def get_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
+    """Get deployment status"""
     if deployment_id not in DEPLOYMENTS:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    return DEPLOYMENTS[deployment_id]
+    
+    deployment = DEPLOYMENTS[deployment_id]
+    
+    # SECURITY: Require auth and verify ownership
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    token = extract_token(authorization)
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    
+    if deployment.get("address", "").lower() != session["address"].lower():
+        raise HTTPException(status_code=403, detail="Not your deployment")
+    
+    return deployment
 
 
-# ============ Dashboard ============
+@app.get("/api/credits/{address}")
+async def get_credits(address: str):
+    """Get credit balance for an address"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.aleph.cloud/api/v1/credits/balance",
+                params={"address": address}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return {"address": address, "balance": data.get("balance", 0)}
+    except Exception as e:
+        pass
+    return {"address": address, "balance": None, "error": "Could not fetch balance"}
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard():
-    """Interactive marketplace dashboard with credit balance + SSH key support."""
-    html_path = Path(__file__).parent / "templates" / "dashboard.html"
-    if html_path.exists():
-        return HTMLResponse(html_path.read_text())
-    return HTMLResponse("<h1>Dashboard template not found</h1>")
 
+# ============ Static Files & Dashboard ============
 
 # Mount static files if directory exists
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """Interactive marketplace dashboard"""
+    return DASHBOARD_HTML
 
 
 if __name__ == "__main__":
