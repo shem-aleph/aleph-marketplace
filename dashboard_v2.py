@@ -804,7 +804,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const balance = data.credit_balance !== undefined ? data.credit_balance : data.balance;
 
                 if (balance !== null && balance !== undefined) {
-                    const credits = Number(balance);
+                    // credit_balance is in micro-units (1,000,000 = 1 credit)
+                    const credits = Number(balance) / 1000000;
                     if (credits > 1000000) {
                         amountEl.textContent = (credits / 1000000).toFixed(1) + 'M';
                     } else if (credits > 1000) {
