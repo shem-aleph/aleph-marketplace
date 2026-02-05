@@ -23,6 +23,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname
 from deployer import deploy as deploy_to_aleph, orchestrator
 from dashboard_v2 import DASHBOARD_HTML
 from ssh_executor import SSHExecutor, DeploymentTracker
+
+GATEWAY_API_URL = "https://api.2n6.me"
+
+async def lookup_instance_subdomain(instance_hash: str) -> Optional[str]:
+    """Look up the 2n6.me subdomain for an instance via the gateway API"""
+    if not instance_hash:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{GATEWAY_API_URL}/api/hash/{instance_hash}")
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("subdomain")
+    except Exception as e:
+        logging.getLogger("deploy").warning(f"Gateway lookup failed for {instance_hash}: {e}")
+    return None
 from security import (
     sanitize_app_name, validate_eth_address, validate_ssh_host, validate_port,
     rate_limiter, require_eth_account, extract_token
@@ -416,11 +432,12 @@ async def execute_deployment(
     )
     
     tunnel_port = get_host_port_from_compose(app["docker_compose"])
-    tunnel_result = await deployer.setup_cloudflare_tunnel(
+    tunnel_result = await deployer.setup_caddy_proxy(
         ssh_host=ssh_info.host,
         ssh_port=ssh_info.port,
         ssh_user=ssh_info.user,
-        local_port=tunnel_port
+        local_port=tunnel_port,
+        subdomain="manual",  # TODO: derive from instance hash
     )
     
     return {
@@ -517,17 +534,24 @@ async def _run_deploy_job(deployment_id: str, app: dict, request: SSHDeployReque
         if deploy_result.get("generated_passwords"):
             job["generated_passwords"] = deploy_result["generated_passwords"]
 
-        # Set up tunnel
+        # Set up public URL via 2n6.me gateway + Caddy
         if request.setup_tunnel:
             job["step"] = "tunnel"
             tunnel_port = request.tunnel_port
             if tunnel_port is None:
                 tunnel_port = get_host_port_from_compose(app["docker_compose"])
-            tunnel_result = await executor.setup_tunnel(tunnel_port)
-            if tunnel_result.get("url"):
-                deployment_tracker.update_deployment(deployment_id, public_url=tunnel_result["url"])
-                job["public_url"] = tunnel_result["url"]
-            job["tunnel"] = tunnel_result
+
+            # Look up subdomain from gateway
+            subdomain = await lookup_instance_subdomain(request.instance_hash)
+            if subdomain:
+                tunnel_result = await executor.setup_caddy_proxy(tunnel_port, subdomain)
+                if tunnel_result.get("url"):
+                    deployment_tracker.update_deployment(deployment_id, public_url=tunnel_result["url"])
+                    job["public_url"] = tunnel_result["url"]
+                job["tunnel"] = tunnel_result
+            else:
+                log.warning(f"Could not resolve subdomain for instance {request.instance_hash}")
+                job["tunnel"] = {"status": "skipped", "reason": "No subdomain resolved from gateway"}
 
         # Cleanup marketplace SSH key
         try:
