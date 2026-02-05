@@ -244,49 +244,51 @@ class SSHExecutor:
         result["app_directory"] = f"/root/apps/{safe_app_name}"
         return result
     
-    async def setup_tunnel(self, local_port: int) -> dict:
-        """Set up a Cloudflare tunnel for the app"""
-        result = {"status": "pending", "port": local_port}
-        
-        # Check if cloudflared is installed
-        code, _, _ = await self.run_command("which cloudflared")
+    async def setup_caddy_proxy(self, local_port: int, subdomain: str, domain: str = "2n6.me") -> dict:
+        """Set up Caddy as a reverse proxy with automatic HTTPS for the 2n6.me domain"""
+        result = {"status": "pending", "port": local_port, "subdomain": subdomain}
+        fqdn = f"{subdomain}.{domain}"
+
+        # Check if caddy is installed
+        code, _, _ = await self.run_command("which caddy")
         if code != 0:
-            # Install cloudflared
+            # Install caddy
             install_cmd = (
-                "curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 "
-                "-o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared"
+                "apt-get update -qq && apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl && "
+                "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && "
+                "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list && "
+                "apt-get update -qq && apt-get install -y -qq caddy"
             )
-            code, _, stderr = await self.run_command(install_cmd, timeout=60)
+            code, _, stderr = await self.run_command(install_cmd, timeout=120)
             if code != 0:
                 result["status"] = "failed"
-                result["error"] = f"Failed to install cloudflared: {stderr}"
+                result["error"] = f"Failed to install caddy: {stderr}"
                 return result
-        
-        # Kill any existing tunnel on this port
-        await self.run_command(f"pkill -f 'cloudflared.*{local_port}' || true")
-        await asyncio.sleep(1)
-        
-        # Start the tunnel
-        tunnel_cmd = f"nohup cloudflared tunnel --url http://localhost:{local_port} > /tmp/tunnel-{local_port}.log 2>&1 &"
-        code, _, stderr = await self.run_command(tunnel_cmd)
+
+        # Stop caddy if running (clean state)
+        await self.run_command("systemctl stop caddy 2>/dev/null || true")
+
+        # Write Caddyfile
+        caddyfile_content = f"{fqdn} {{\n    reverse_proxy localhost:{local_port}\n}}\n"
+        write_cmd = _safe_write_file_command(caddyfile_content, "/etc/caddy/Caddyfile")
+        code, _, stderr = await self.run_command(write_cmd)
         if code != 0:
             result["status"] = "failed"
-            result["error"] = f"Failed to start tunnel: {stderr}"
+            result["error"] = f"Failed to write Caddyfile: {stderr}"
             return result
-        
-        # Wait for tunnel URL
+
+        # Start caddy
+        code, _, stderr = await self.run_command("systemctl enable caddy && systemctl start caddy")
+        if code != 0:
+            result["status"] = "failed"
+            result["error"] = f"Failed to start caddy: {stderr}"
+            return result
+
+        # Give Caddy a moment to obtain the certificate
         await asyncio.sleep(5)
-        code, stdout, _ = await self.run_command(
-            f"grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' /tmp/tunnel-{local_port}.log | head -1"
-        )
-        
-        if code == 0 and stdout.strip():
-            result["status"] = "running"
-            result["url"] = stdout.strip()
-        else:
-            result["status"] = "started"
-            result["note"] = "Tunnel started but URL not yet available"
-        
+
+        result["status"] = "running"
+        result["url"] = f"https://{fqdn}"
         return result
     
     async def get_app_status(self, app_name: str) -> dict:
