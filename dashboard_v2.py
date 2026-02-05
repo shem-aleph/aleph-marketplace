@@ -333,7 +333,57 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
         .deploy-btn:hover:not(:disabled) { background: var(--gradient-main0); border-color: transparent; }
         .deploy-btn:disabled { border-color: var(--disabled2); color: var(--disabled2); cursor: not-allowed; }
-        
+
+        /* My Apps / Deployment cards */
+        .my-apps-section { margin-bottom: 48px; }
+        .deployment-card {
+            background: var(--translucid);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 24px;
+            transition: all 0.3s;
+        }
+        .deployment-card:hover { border-color: var(--main0); background: rgba(2, 154, 255, 0.05); }
+        .deployment-header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+        .deployment-info { flex: 1; min-width: 0; }
+        .deployment-name { font-family: 'Rubik', sans-serif; font-weight: 700; font-size: 18px; color: var(--white); margin-bottom: 4px; }
+        .deployment-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .deployment-status.running { background: rgba(92, 255, 177, 0.15); color: var(--main1); border: 1px solid rgba(92, 255, 177, 0.3); }
+        .deployment-status.deploying { background: rgba(254, 205, 23, 0.15); color: var(--main2); border: 1px solid rgba(254, 205, 23, 0.3); }
+        .deployment-status.failed, .deployment-status.stopped { background: rgba(217, 36, 70, 0.15); color: var(--error); border: 1px solid rgba(217, 36, 70, 0.3); }
+        .deployment-status.unreachable, .deployment-status.unknown { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); border: 1px solid var(--border); }
+        .deployment-url {
+            display: inline-block;
+            color: var(--main0);
+            font-size: 13px;
+            text-decoration: none;
+            margin: 8px 0;
+            word-break: break-all;
+        }
+        .deployment-url:hover { text-decoration: underline; }
+        .deployment-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; font-family: 'Source Code Pro', monospace; }
+        .deployment-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .deployment-actions button {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .deployment-actions button:hover { border-color: var(--main0); color: var(--main0); }
+        .deployment-actions button.danger:hover { border-color: var(--error); color: var(--error); }
+
         /* SSH Key selector */
         .ssh-key-option {
             display: flex;
@@ -607,7 +657,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <h3>🔐 Connect Your Wallet</h3>
             <p>Connect your Ethereum wallet to deploy applications on Aleph Cloud using your credits</p>
         </div>
-        
+
+        <section class="my-apps-section" id="myAppsSection" style="display:none;">
+            <div class="section-header">
+                <span class="section-number">00/</span>
+                <span class="section-title">My Apps</span>
+                <span class="section-icon">🖥️</span>
+            </div>
+            <div class="apps-grid" id="myAppsGrid"></div>
+        </section>
+
         <section class="featured-section" id="featuredSection">
             <div class="section-header">
                 <span class="section-number">01/</span>
@@ -788,6 +847,128 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             return selectedSshKey;
         }
 
+        // --- My Apps ---
+        let myDeployments = [];
+
+        async function fetchMyDeployments() {
+            if (!wallet.connected || !wallet.token) return;
+            try {
+                const res = await fetch('/api/deployments/my', {
+                    headers: { 'Authorization': 'Bearer ' + wallet.token }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                myDeployments = data.deployments || [];
+                renderMyDeployments();
+            } catch (e) {
+                console.error('Failed to fetch deployments:', e);
+            }
+        }
+
+        function renderMyDeployments() {
+            const grid = document.getElementById('myAppsGrid');
+            if (myDeployments.length === 0) {
+                grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><div class="empty-state-icon">🖥️</div><h3>No deployed apps yet</h3><p>Deploy an app below to see it here</p></div>';
+                return;
+            }
+            grid.innerHTML = myDeployments.map(function(d) {
+                const app = apps.find(function(a) { return a.id === d.app_id; });
+                const icon = app ? app.icon : '📦';
+                const name = d.app_name || (app ? app.name : d.app_id);
+                const status = d.status || 'unknown';
+                const statusClass = status === 'complete' ? 'running' : (status === 'deploying' || status === 'queued' ? 'deploying' : (status === 'failed' ? 'failed' : (status === 'stopped' ? 'stopped' : 'unknown')));
+                const statusLabel = status === 'complete' ? 'Running' : status.charAt(0).toUpperCase() + status.slice(1);
+
+                let urlHtml = '';
+                if (d.public_url) {
+                    urlHtml = '<a class="deployment-url" href="' + escapeHtml(d.public_url) + '" target="_blank">' + escapeHtml(d.public_url) + '</a><br>';
+                }
+
+                let sshHtml = '';
+                if (d.ssh_host) {
+                    const port = d.ssh_port || 22;
+                    sshHtml = '<div class="deployment-meta">ssh -p ' + port + ' root@' + escapeHtml(d.ssh_host) + '</div>';
+                }
+
+                const created = d.created_at ? new Date(d.created_at * 1000).toLocaleDateString() : '';
+
+                return '<div class="deployment-card" id="deploy-card-' + escapeHtml(d.id) + '">'
+                    + '<div class="deployment-header">'
+                    + '<span class="app-icon">' + icon + '</span>'
+                    + '<div class="deployment-info">'
+                    + '<div class="deployment-name">' + escapeHtml(name) + '</div>'
+                    + '<span class="deployment-status ' + statusClass + '">' + escapeHtml(statusLabel) + '</span>'
+                    + '</div>'
+                    + '</div>'
+                    + urlHtml
+                    + sshHtml
+                    + (created ? '<div class="deployment-meta">Deployed: ' + escapeHtml(created) + '</div>' : '')
+                    + '<div class="deployment-actions">'
+                    + '<button onclick="refreshDeploymentStatus(\'' + escapeHtml(d.id) + '\')">&#x21bb; Refresh</button>'
+                    + '<button onclick="stopDeployment(\'' + escapeHtml(d.id) + '\')">&#x23F9; Stop</button>'
+                    + '<button class="danger" onclick="deleteDeployment(\'' + escapeHtml(d.id) + '\')">&#x1F5D1; Delete</button>'
+                    + '</div>'
+                    + '</div>';
+            }).join('');
+        }
+
+        async function refreshDeploymentStatus(id) {
+            if (!wallet.token) return;
+            try {
+                showToast('Checking status...', 'info');
+                const res = await fetch('/api/deployments/' + encodeURIComponent(id) + '/status', {
+                    headers: { 'Authorization': 'Bearer ' + wallet.token }
+                });
+                if (!res.ok) { showToast('Failed to check status', 'error'); return; }
+                const data = await res.json();
+                // Update the deployment in our local array
+                const idx = myDeployments.findIndex(function(d) { return d.id === id; });
+                if (idx !== -1) {
+                    if (data.status) myDeployments[idx].status = data.status;
+                    if (data.containers) myDeployments[idx].containers = data.containers;
+                }
+                renderMyDeployments();
+                showToast('Status updated', 'success');
+            } catch (e) {
+                console.error('Refresh status error:', e);
+                showToast('Could not reach deployment', 'error');
+            }
+        }
+
+        async function stopDeployment(id) {
+            if (!wallet.token) return;
+            if (!confirm('Stop this deployment? Containers will be shut down.')) return;
+            try {
+                const res = await fetch('/api/deployments/' + encodeURIComponent(id) + '/stop', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + wallet.token }
+                });
+                if (!res.ok) { showToast('Failed to stop deployment', 'error'); return; }
+                showToast('Deployment stopped', 'success');
+                await fetchMyDeployments();
+            } catch (e) {
+                console.error('Stop deployment error:', e);
+                showToast('Failed to stop deployment', 'error');
+            }
+        }
+
+        async function deleteDeployment(id) {
+            if (!wallet.token) return;
+            if (!confirm('Delete this deployment? This cannot be undone.')) return;
+            try {
+                const res = await fetch('/api/deployments/' + encodeURIComponent(id), {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + wallet.token }
+                });
+                if (!res.ok) { showToast('Failed to delete deployment', 'error'); return; }
+                showToast('Deployment deleted', 'success');
+                await fetchMyDeployments();
+            } catch (e) {
+                console.error('Delete deployment error:', e);
+                showToast('Failed to delete deployment', 'error');
+            }
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -887,6 +1068,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('disconnectBtn').style.display = 'none';
             document.getElementById('creditBadge').style.display = 'none';
             document.getElementById('authNotice').classList.remove('hidden');
+            document.getElementById('myAppsSection').style.display = 'none';
+            myDeployments = [];
             renderApps();
             showToast('Disconnected', 'info');
         }
@@ -924,7 +1107,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             document.getElementById('walletInfo').style.display = 'block';
             document.getElementById('disconnectBtn').style.display = 'block';
             document.getElementById('authNotice').classList.add('hidden');
+            document.getElementById('myAppsSection').style.display = '';
             renderApps();
+            // Auth then fetch deployments (auth needed for /api/deployments/my)
+            if (!wallet.token) {
+                authenticateWithServer().then(function() { fetchMyDeployments(); }).catch(function(e) { console.warn('Auto-auth failed:', e); });
+            } else {
+                fetchMyDeployments();
+            }
         }
         
         async function loadApps() {
@@ -1372,6 +1562,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('deploySuccess').style.display = 'block';
 
                 showToast('Application deployed successfully!', 'success');
+                fetchMyDeployments();
 
             } catch (err) {
                 console.error('Deploy error:', err);
