@@ -18,17 +18,22 @@ No tests, linting, or CI exist yet.
 
 ## Production Deployment
 
-The app runs on an Aleph Cloud VM itself:
+The app runs on an Aleph Cloud VM at `2a01:240:ad00:2503:3:9046:280c:7c31`:
 
 ```bash
-ssh -p 24003 root@213.246.39.151
+ssh root@2a01:240:ad00:2503:3:9046:280c:7c31
 # Code lives at /root/aleph-marketplace/
-# Restart after changes:
-kill $(pgrep -f 'python3 main.py')
-cd /root/aleph-marketplace && nohup python3 main.py > /tmp/marketplace.log 2>&1 &
+# Runs as a systemd service:
+systemctl status aleph-marketplace
+systemctl restart aleph-marketplace
+journalctl -u aleph-marketplace -f
 ```
 
-Server runs uvicorn on port 8002 behind a Caddy reverse proxy with 2n6.me domain.
+Public URL: https://motion-course-adapt-wear.2n6.me
+
+Server runs uvicorn on port 8002 behind Caddy (auto-HTTPS via Let's Encrypt for `motion-course-adapt-wear.2n6.me`). Both `aleph-marketplace.service` and `caddy.service` are enabled and start on boot.
+
+**Required packages** (beyond requirements.txt): `eth_account` must be installed in the venv for wallet signature verification to work. The marketplace also needs an SSH keypair at `~/.ssh/id_rsa` to SSH into target VMs during deployment.
 
 ## Architecture
 
@@ -78,3 +83,4 @@ Add an entry to `templates/apps.json` in the `apps` array with: id, name, descri
 - Aleph API: `https://api2.aleph.im/api/v0`
 - CRN list: `https://crns-list.aleph.sh/crns.json`
 - SSH keys fetched from Aleph network posts (type=ALEPH-SSH, channel=ALEPH-CLOUDSOLUTIONS)
+- 2n6.me gateway API: `https://api.2n6.me` (subdomain lookup: `/api/hash/{instance_hash}`, status: `/api/status`)
