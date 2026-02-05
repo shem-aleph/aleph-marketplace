@@ -504,33 +504,46 @@ docker compose ps
             result["generated_passwords"] = generated_passwords
         return result
     
-    async def setup_cloudflare_tunnel(
+    async def setup_caddy_proxy(
         self,
         ssh_host: str,
         ssh_port: int,
         ssh_user: str,
-        local_port: int
+        local_port: int,
+        subdomain: str,
+        domain: str = "2n6.me"
     ) -> dict:
-        """Generate commands to set up a Cloudflare tunnel."""
+        """Generate commands to set up Caddy reverse proxy with automatic HTTPS."""
+        fqdn = f"{subdomain}.{domain}"
         tunnel_script = f'''#!/bin/bash
-# Install cloudflared if not present
-if ! command -v cloudflared &> /dev/null; then
-    curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-    chmod +x /usr/local/bin/cloudflared
+# Install Caddy if not present
+if ! command -v caddy &> /dev/null; then
+    apt-get update -qq
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq && apt-get install -y -qq caddy
 fi
 
-# Start tunnel
-nohup cloudflared tunnel --url http://localhost:{local_port} > /tmp/tunnel-{local_port}.log 2>&1 &
+# Write Caddyfile
+cat > /etc/caddy/Caddyfile << 'CADDY_EOF'
+{fqdn} {{
+    reverse_proxy localhost:{local_port}
+}}
+CADDY_EOF
 
-# Wait for URL
-sleep 5
-grep -o 'https://[a-z-]*\\.trycloudflare\\.com' /tmp/tunnel-{local_port}.log | head -1
+# Restart caddy to pick up new config
+systemctl enable caddy
+systemctl restart caddy
+
+echo "Caddy configured for https://{fqdn}"
 '''
-        
+
         return {
             "status": "script_ready",
             "tunnel_script": tunnel_script,
-            "note": "Run this after docker-compose is running"
+            "url": f"https://{fqdn}",
+            "note": "Run this after docker-compose is running. Caddy will auto-provision an HTTPS certificate."
         }
 
 
@@ -590,11 +603,12 @@ class DeploymentOrchestrator:
             
             # Tunnel setup
             tunnel_port = get_host_port_from_compose(app["docker_compose"])
-            tunnel_result = await self.deployer.setup_cloudflare_tunnel(
+            tunnel_result = await self.deployer.setup_caddy_proxy(
                 ssh_host=ssh_info["host"],
                 ssh_port=ssh_info.get("port", 22),
                 ssh_user=ssh_info.get("user", "root"),
-                local_port=tunnel_port
+                local_port=tunnel_port,
+                subdomain="manual",  # TODO: derive from instance hash when available
             )
             result["steps"].append({
                 "step": "prepare_tunnel",
