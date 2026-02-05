@@ -17,7 +17,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  wordpress:\n    image: wordpress:latest\n    ports:\n      - '80:80'\n    environment:\n      WORDPRESS_DB_HOST: db\n      WORDPRESS_DB_USER: wordpress\n      WORDPRESS_DB_PASSWORD: __GENERATED_PASSWORD__\n      WORDPRESS_DB_NAME: wordpress\n    volumes:\n      - wordpress_data:/var/www/html\n    restart: unless-stopped\n  db:\n    image: mysql:8.0\n    environment:\n      MYSQL_DATABASE: wordpress\n      MYSQL_USER: wordpress\n      MYSQL_PASSWORD: __GENERATED_PASSWORD__\n      MYSQL_ROOT_PASSWORD: __GENERATED_ROOT_PASSWORD__\n    volumes:\n      - db_data:/var/lib/mysql\n    restart: unless-stopped\nvolumes:\n  wordpress_data:\n  db_data:",
-      "estimated_cost_per_day": 0.68
+      "estimated_cost_per_day": 0.68,
+      "post_deploy": [
+        "Visit your URL to run the WordPress setup wizard",
+        "Choose your site title and create an admin account",
+        "Database is pre-configured — no extra setup needed"
+      ]
     },
     {
       "id": "ghost",
@@ -36,7 +41,12 @@
         "disk_gb": 10
       },
       "docker_compose": "version: '3.8'\nservices:\n  ghost:\n    image: ghost:5-alpine\n    ports:\n      - '80:2368'\n    environment:\n      url: http://localhost\n    volumes:\n      - ghost_data:/var/lib/ghost/content\n    restart: unless-stopped\nvolumes:\n  ghost_data:",
-      "estimated_cost_per_day": 0.34
+      "estimated_cost_per_day": 0.34,
+      "post_deploy": [
+        "Visit your URL to access the Ghost admin panel",
+        "Go to /ghost to create your admin account",
+        "Start writing posts from the dashboard"
+      ]
     },
     {
       "id": "gitea",
@@ -55,7 +65,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  gitea:\n    image: gitea/gitea:latest\n    ports:\n      - '80:3000'\n      - '22:22'\n    volumes:\n      - gitea_data:/data\n    restart: unless-stopped\nvolumes:\n  gitea_data:",
-      "estimated_cost_per_day": 0.34
+      "estimated_cost_per_day": 0.34,
+      "post_deploy": [
+        "Visit your URL to access Gitea",
+        "Register the first user — they become the admin",
+        "Create repositories from the + menu in the top right"
+      ]
     },
     {
       "id": "code-server",
@@ -74,7 +89,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  code-server:\n    image: codercom/code-server:latest\n    ports:\n      - '80:8080'\n    environment:\n      PASSWORD: __GENERATED_PASSWORD__\n    volumes:\n      - code_data:/home/coder\n    restart: unless-stopped\nvolumes:\n  code_data:",
-      "estimated_cost_per_day": 0.68
+      "estimated_cost_per_day": 0.68,
+      "post_deploy": [
+        "Visit your URL and log in with the generated password",
+        "Open a terminal or start coding right away",
+        "Your workspace persists across container restarts"
+      ]
     },
     {
       "id": "ollama",
@@ -93,7 +113,13 @@
         "disk_gb": 50
       },
       "docker_compose": "version: '3.8'\nservices:\n  ollama:\n    image: ollama/ollama:latest\n    ports:\n      - '11434:11434'\n    volumes:\n      - ollama_data:/root/.ollama\n    restart: unless-stopped\nvolumes:\n  ollama_data:",
-      "estimated_cost_per_day": 2.72
+      "estimated_cost_per_day": 2.72,
+      "post_deploy": [
+        "Ollama is an API service — no web UI by default",
+        "SSH in and run: ollama pull llama3 to download a model",
+        "Send requests to http://YOUR_IP:11434/api/generate",
+        "See available models at https://ollama.com/library"
+      ]
     },
     {
       "id": "postgres",
@@ -112,7 +138,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  postgres:\n    image: postgres:16-alpine\n    ports:\n      - '5432:5432'\n    environment:\n      POSTGRES_PASSWORD: __GENERATED_PASSWORD__\n      POSTGRES_DB: main\n    volumes:\n      - pg_data:/var/lib/postgresql/data\n    restart: unless-stopped\nvolumes:\n  pg_data:",
-      "estimated_cost_per_day": 0.34
+      "estimated_cost_per_day": 0.34,
+      "post_deploy": [
+        "Connect with: psql -h YOUR_IP -p 5432 -U postgres -d main",
+        "Use the generated password when prompted",
+        "Default database is 'main' — create more with CREATE DATABASE"
+      ]
     },
     {
       "id": "redis",
@@ -131,7 +162,12 @@
         "disk_gb": 5
       },
       "docker_compose": "version: '3.8'\nservices:\n  redis:\n    image: redis:alpine\n    ports:\n      - '6379:6379'\n    volumes:\n      - redis_data:/data\n    command: redis-server --appendonly yes\n    restart: unless-stopped\nvolumes:\n  redis_data:",
-      "estimated_cost_per_day": 0.17
+      "estimated_cost_per_day": 0.17,
+      "post_deploy": [
+        "Connect with: redis-cli -h YOUR_IP -p 6379",
+        "No password set by default — data persists via AOF",
+        "Use as cache or message broker for your other services"
+      ]
     },
     {
       "id": "uptime-kuma",
@@ -150,7 +186,12 @@
         "disk_gb": 5
       },
       "docker_compose": "version: '3.8'\nservices:\n  uptime-kuma:\n    image: louislam/uptime-kuma:latest\n    ports:\n      - '80:3001'\n    volumes:\n      - kuma_data:/app/data\n    restart: unless-stopped\nvolumes:\n  kuma_data:",
-      "estimated_cost_per_day": 0.17
+      "estimated_cost_per_day": 0.17,
+      "post_deploy": [
+        "Visit your URL to access the Uptime Kuma dashboard",
+        "Create an admin account on first visit",
+        "Add monitors for your websites, APIs, or services"
+      ]
     },
     {
       "id": "n8n",
@@ -169,7 +210,12 @@
         "disk_gb": 10
       },
       "docker_compose": "version: '3.8'\nservices:\n  n8n:\n    image: n8nio/n8n:latest\n    ports:\n      - '80:5678'\n    environment:\n      N8N_BASIC_AUTH_ACTIVE: 'true'\n      N8N_BASIC_AUTH_USER: admin\n      N8N_BASIC_AUTH_PASSWORD: __GENERATED_PASSWORD__\n    volumes:\n      - n8n_data:/home/node/.n8n\n    restart: unless-stopped\nvolumes:\n  n8n_data:",
-      "estimated_cost_per_day": 0.34
+      "estimated_cost_per_day": 0.34,
+      "post_deploy": [
+        "Visit your URL and log in with admin / generated password",
+        "Build workflows by dragging and connecting nodes",
+        "Browse integrations at https://n8n.io/integrations"
+      ]
     },
     {
       "id": "minio",
@@ -188,7 +234,12 @@
         "disk_gb": 50
       },
       "docker_compose": "version: '3.8'\nservices:\n  minio:\n    image: minio/minio:latest\n    ports:\n      - '9000:9000'\n      - '9001:9001'\n    environment:\n      MINIO_ROOT_USER: admin\n      MINIO_ROOT_PASSWORD: __GENERATED_PASSWORD__\n    volumes:\n      - minio_data:/data\n    command: server /data --console-address ':9001'\n    restart: unless-stopped\nvolumes:\n  minio_data:",
-      "estimated_cost_per_day": 0.68
+      "estimated_cost_per_day": 0.68,
+      "post_deploy": [
+        "Console is at YOUR_URL:9001 — log in with admin / generated password",
+        "API endpoint is at YOUR_URL:9000 (S3-compatible)",
+        "Create buckets from the console, then use any S3 client to upload"
+      ]
     },
     {
       "id": "nextcloud",
@@ -209,7 +260,12 @@
         "disk_gb": 50
       },
       "docker_compose": "version: '3.8'\nservices:\n  nextcloud:\n    image: nextcloud:latest\n    ports:\n      - '80:80'\n    environment:\n      MYSQL_HOST: db\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: __GENERATED_PASSWORD__\n      NEXTCLOUD_ADMIN_USER: admin\n      NEXTCLOUD_ADMIN_PASSWORD: __GENERATED_PASSWORD__\n    volumes:\n      - nextcloud_data:/var/www/html\n    depends_on:\n      - db\n    restart: unless-stopped\n  db:\n    image: mariadb:10.11\n    environment:\n      MYSQL_DATABASE: nextcloud\n      MYSQL_USER: nextcloud\n      MYSQL_PASSWORD: __GENERATED_PASSWORD__\n      MYSQL_ROOT_PASSWORD: __GENERATED_ROOT_PASSWORD__\n    volumes:\n      - db_data:/var/lib/mysql\n    restart: unless-stopped\nvolumes:\n  nextcloud_data:\n  db_data:",
-      "estimated_cost_per_day": 0.85
+      "estimated_cost_per_day": 0.85,
+      "post_deploy": [
+        "Visit your URL — admin login is admin / generated password",
+        "Install the Nextcloud desktop or mobile app to sync files",
+        "Enable additional apps (Calendar, Contacts, etc.) from the admin panel"
+      ]
     },
     {
       "id": "vaultwarden",
@@ -229,7 +285,12 @@
         "disk_gb": 5
       },
       "docker_compose": "version: '3.8'\nservices:\n  vaultwarden:\n    image: vaultwarden/server:latest\n    ports:\n      - '80:80'\n    environment:\n      DOMAIN: https://vault.example.com\n      SIGNUPS_ALLOWED: 'true'\n      ADMIN_TOKEN: __GENERATED_PASSWORD__\n    volumes:\n      - vaultwarden_data:/data\n    restart: unless-stopped\nvolumes:\n  vaultwarden_data:",
-      "estimated_cost_per_day": 0.17
+      "estimated_cost_per_day": 0.17,
+      "post_deploy": [
+        "Visit your URL and create an account",
+        "Install the Bitwarden browser extension and point it to your URL",
+        "Admin panel is at /admin — use the generated admin token to log in"
+      ]
     },
     {
       "id": "grafana-prometheus",
@@ -250,7 +311,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  prometheus:\n    image: prom/prometheus:latest\n    ports:\n      - '9090:9090'\n    volumes:\n      - prometheus_data:/prometheus\n      - ./prometheus.yml:/etc/prometheus/prometheus.yml\n    command:\n      - '--config.file=/etc/prometheus/prometheus.yml'\n      - '--storage.tsdb.path=/prometheus'\n    restart: unless-stopped\n  grafana:\n    image: grafana/grafana:latest\n    ports:\n      - '80:3000'\n    environment:\n      GF_SECURITY_ADMIN_USER: admin\n      GF_SECURITY_ADMIN_PASSWORD: __GENERATED_PASSWORD__\n      GF_USERS_ALLOW_SIGN_UP: 'false'\n    volumes:\n      - grafana_data:/var/lib/grafana\n    depends_on:\n      - prometheus\n    restart: unless-stopped\nvolumes:\n  prometheus_data:\n  grafana_data:",
-      "estimated_cost_per_day": 0.68
+      "estimated_cost_per_day": 0.68,
+      "post_deploy": [
+        "Grafana is at your URL — log in with admin / generated password",
+        "Prometheus is at YOUR_URL:9090 for raw metrics",
+        "Add Prometheus as a data source in Grafana: http://prometheus:9090"
+      ]
     },
     {
       "id": "jupyter",
@@ -271,7 +337,12 @@
         "disk_gb": 20
       },
       "docker_compose": "version: '3.8'\nservices:\n  jupyter:\n    image: jupyter/datascience-notebook:latest\n    ports:\n      - '80:8888'\n    environment:\n      JUPYTER_TOKEN: __GENERATED_PASSWORD__\n      JUPYTER_ENABLE_LAB: 'yes'\n    volumes:\n      - jupyter_data:/home/jovyan/work\n    restart: unless-stopped\nvolumes:\n  jupyter_data:",
-      "estimated_cost_per_day": 1.02
+      "estimated_cost_per_day": 1.02,
+      "post_deploy": [
+        "Visit your URL and enter the generated token to log in",
+        "JupyterLab is enabled — use the full IDE interface",
+        "Includes Python, R, and Julia with common data science libraries"
+      ]
     },
     {
       "id": "portainer",
@@ -291,7 +362,12 @@
         "disk_gb": 5
       },
       "docker_compose": "version: '3.8'\nservices:\n  portainer:\n    image: portainer/portainer-ce:latest\n    ports:\n      - '80:9000'\n      - '9443:9443'\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n      - portainer_data:/data\n    restart: unless-stopped\nvolumes:\n  portainer_data:",
-      "estimated_cost_per_day": 0.17
+      "estimated_cost_per_day": 0.17,
+      "post_deploy": [
+        "Visit your URL and create an admin account on first login",
+        "Connect to your Docker socket to manage containers",
+        "Deploy stacks, manage volumes, and view logs from the UI"
+      ]
     },
     {
       "id": "traefik",
@@ -312,7 +388,12 @@
         "disk_gb": 5
       },
       "docker_compose": "version: '3.8'\nservices:\n  traefik:\n    image: traefik:v3.0\n    ports:\n      - '80:80'\n      - '443:443'\n      - '8080:8080'\n    command:\n      - '--api.insecure=true'\n      - '--providers.docker=true'\n      - '--providers.docker.exposedbydefault=false'\n      - '--entrypoints.web.address=:80'\n      - '--entrypoints.websecure.address=:443'\n      - '--certificatesresolvers.letsencrypt.acme.httpchallenge=true'\n      - '--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web'\n      - '--certificatesresolvers.letsencrypt.acme.email=admin@example.com'\n      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n      - traefik_certs:/letsencrypt\n    restart: unless-stopped\nvolumes:\n  traefik_certs:",
-      "estimated_cost_per_day": 0.17
+      "estimated_cost_per_day": 0.17,
+      "post_deploy": [
+        "Dashboard is at YOUR_URL:8080 (API mode, no auth by default)",
+        "Configure routers and services via Docker labels on your containers",
+        "Update the email in the config for Let's Encrypt certificates"
+      ]
     },
     {
       "id": "immich",
@@ -333,7 +414,12 @@
         "disk_gb": 100
       },
       "docker_compose": "version: '3.8'\nservices:\n  immich-server:\n    image: ghcr.io/immich-app/immich-server:release\n    ports:\n      - '80:3001'\n    environment:\n      DB_HOSTNAME: database\n      DB_USERNAME: postgres\n      DB_PASSWORD: __GENERATED_PASSWORD__\n      DB_DATABASE_NAME: immich\n      REDIS_HOSTNAME: redis\n    volumes:\n      - upload_data:/usr/src/app/upload\n    depends_on:\n      - redis\n      - database\n    restart: unless-stopped\n  immich-machine-learning:\n    image: ghcr.io/immich-app/immich-machine-learning:release\n    volumes:\n      - model_cache:/cache\n    restart: unless-stopped\n  redis:\n    image: redis:6.2-alpine\n    restart: unless-stopped\n  database:\n    image: tensorchord/pgvecto-rs:pg14-v0.2.0\n    environment:\n      POSTGRES_PASSWORD: __GENERATED_PASSWORD__\n      POSTGRES_USER: postgres\n      POSTGRES_DB: immich\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n    restart: unless-stopped\nvolumes:\n  upload_data:\n  model_cache:\n  pgdata:",
-      "estimated_cost_per_day": 1.7
+      "estimated_cost_per_day": 1.7,
+      "post_deploy": [
+        "Visit your URL and create an account",
+        "Install the Immich mobile app (iOS/Android) and point it to your URL",
+        "Enable ML-powered face detection and object recognition in settings"
+      ]
     },
     {
       "id": "paperless-ngx",
@@ -354,7 +440,12 @@
         "disk_gb": 30
       },
       "docker_compose": "version: '3.8'\nservices:\n  paperless:\n    image: ghcr.io/paperless-ngx/paperless-ngx:latest\n    ports:\n      - '80:8000'\n    environment:\n      PAPERLESS_REDIS: redis://redis:6379\n      PAPERLESS_DBHOST: db\n      PAPERLESS_DBNAME: paperless\n      PAPERLESS_DBUSER: paperless\n      PAPERLESS_DBPASS: __GENERATED_PASSWORD__\n      PAPERLESS_ADMIN_USER: admin\n      PAPERLESS_ADMIN_PASSWORD: __GENERATED_PASSWORD__\n      PAPERLESS_OCR_LANGUAGE: eng\n    volumes:\n      - paperless_data:/usr/src/paperless/data\n      - paperless_media:/usr/src/paperless/media\n      - paperless_export:/usr/src/paperless/export\n      - paperless_consume:/usr/src/paperless/consume\n    depends_on:\n      - db\n      - redis\n    restart: unless-stopped\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_DB: paperless\n      POSTGRES_USER: paperless\n      POSTGRES_PASSWORD: __GENERATED_PASSWORD__\n    volumes:\n      - pgdata:/var/lib/postgresql/data\n    restart: unless-stopped\n  redis:\n    image: redis:7\n    restart: unless-stopped\nvolumes:\n  paperless_data:\n  paperless_media:\n  paperless_export:\n  paperless_consume:\n  pgdata:",
-      "estimated_cost_per_day": 0.68
+      "estimated_cost_per_day": 0.68,
+      "post_deploy": [
+        "Visit your URL and log in with admin / generated password",
+        "Upload documents via the web UI or email them to the consume folder",
+        "OCR runs automatically — search your documents by content"
+      ]
     },
     {
       "id": "openclaw",
@@ -377,7 +468,12 @@
       "docker_compose": "version: '3.8'\nservices:\n  openclaw:\n    image: node:22-slim\n    working_dir: /app\n    ports:\n      - '3000:3000'\n    environment:\n      ANTHROPIC_API_KEY: your-api-key-here\n    volumes:\n      - openclaw_data:/app/data\n    command: >\n      bash -c \"npm install -g openclaw && openclaw gateway start\"\n    restart: unless-stopped\nvolumes:\n  openclaw_data:",
       "estimated_cost_per_day": 0.68,
       "setup_notes": "Requires Anthropic API key. Set ANTHROPIC_API_KEY environment variable.",
-      "docs_url": "https://docs.openclaw.ai"
+      "docs_url": "https://docs.openclaw.ai",
+      "post_deploy": [
+        "SSH in and set your Anthropic API key in the docker-compose environment",
+        "Restart the container: cd /root/apps/openclaw && docker compose up -d",
+        "Visit your URL:3000 to interact with your AI assistant"
+      ]
     }
   ],
   "categories": [

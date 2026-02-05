@@ -1344,6 +1344,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     }
                 }
 
+                let instructionsHtml = '';
+                if (selectedApp.post_deploy && selectedApp.post_deploy.length > 0) {
+                    instructionsHtml = '<p style="margin-top:16px;font-weight:bold;color:var(--main0)">Getting Started:</p><ul style="margin:8px 0 0 16px;color:var(--text-secondary);font-size:13px;line-height:1.8;">';
+                    for (const step of selectedApp.post_deploy) {
+                        instructionsHtml += `<li>${escapeHtml(step)}</li>`;
+                    }
+                    instructionsHtml += '</ul>';
+                }
+
                 const sshCommand = `ssh -p ${sshPort} root@${escapeHtml(vmIp)}`;
 
                 document.getElementById('deploySuccess').innerHTML = `
@@ -1356,6 +1365,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         <p style="margin-top:12px;font-weight:bold;">Instance ID:</p>
                         <code>${escapeHtml(instanceId)}</code>
                         ${credentialsHtml}
+                        ${instructionsHtml}
                         <button class="btn-cancel" style="margin-top:16px;width:100%" onclick="closeModal()">Close</button>
                     </div>
                 `;
