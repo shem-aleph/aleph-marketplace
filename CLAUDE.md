@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Aleph Cloud Marketplace — a one-click app deployment platform for Aleph Cloud decentralized infrastructure. Users connect an Ethereum wallet, pick a pre-configured app (WordPress, Gitea, etc.), and the system creates an Aleph Cloud VM, SSHes in, deploys docker-compose, sets up a Cloudflare tunnel, and returns access details.
+Aleph Cloud Marketplace — a one-click app deployment platform for Aleph Cloud decentralized infrastructure. Users connect an Ethereum wallet, pick a pre-configured app (WordPress, Gitea, etc.), and the system creates an Aleph Cloud VM, SSHes in, deploys docker-compose, sets up a Caddy reverse proxy with auto-HTTPS via 2n6.me, and returns access details.
 
 ## Running Locally
 
@@ -28,7 +28,7 @@ kill $(pgrep -f 'python3 main.py')
 cd /root/aleph-marketplace && nohup python3 main.py > /tmp/marketplace.log 2>&1 &
 ```
 
-Server runs uvicorn on port 8002 behind a Cloudflare tunnel.
+Server runs uvicorn on port 8002 behind a Caddy reverse proxy with 2n6.me domain.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ Two Python files + one HTML SPA. No database — all state is in-memory dicts.
 - Launches background tasks for long-running deployments
 
 **deployer.py** — Two classes:
-- `AlephDeployer`: Low-level operations — instance creation via aleph-sdk-python, VM IP polling (scheduler + CRN APIs), SSH command execution, docker-compose deployment, Cloudflare tunnel setup, marketplace key cleanup
+- `AlephDeployer`: Low-level operations — instance creation via aleph-sdk-python, VM IP polling (scheduler + CRN APIs), SSH command execution, docker-compose deployment, Caddy reverse proxy setup via 2n6.me, marketplace key cleanup
 - `DeploymentOrchestrator`: High-level state machine that chains AlephDeployer operations into a full deploy flow, runs as a background task
 
 **templates/dashboard.html** — Vanilla HTML/JS SPA with ethers.js for wallet connection. Handles wallet auth, app browsing, SSH key selection, deployment initiation, and real-time status polling.
@@ -55,7 +55,7 @@ Two Python files + one HTML SPA. No database — all state is in-memory dicts.
 3. Background task: polls scheduler/CRN for VM IP (30 attempts, 10s apart)
 4. SSHes into VM with marketplace private key (`/root/.ssh/id_rsa`)
 5. Writes docker-compose.yml, pulls images, starts containers
-6. Installs cloudflared, creates tunnel, extracts public URL
+6. Looks up 2n6.me subdomain via gateway API, installs Caddy reverse proxy with auto-HTTPS
 7. Removes marketplace SSH key from VM's authorized_keys
 8. Frontend polls `GET /api/deployments/{id}` every 5s for status updates
 
@@ -66,6 +66,7 @@ Two Python files + one HTML SPA. No database — all state is in-memory dicts.
 - **SSH key security**: marketplace key is injected for automated deployment, then explicitly removed via `sed -i` after deployment completes
 - **Async throughout**: FastAPI async handlers, asyncio.create_subprocess_exec for SSH, httpx.AsyncClient for API calls, BackgroundTasks for polling
 - **CRN API version handling**: deployer.py tries v2 endpoint first (`/v2/about/executions/list`), falls back to v1 (`/about/executions/list`)
+- **2n6.me domain gateway**: Each instance gets a deterministic subdomain (4 BIP-39 words derived from the instance hash). The gateway at api.2n6.me routes `*.2n6.me` traffic to VMs via HAProxy SNI passthrough. Caddy on the VM handles HTTPS cert provisioning via Let's Encrypt.
 
 ## Adding a New App
 
