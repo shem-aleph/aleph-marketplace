@@ -1290,7 +1290,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     queued: 'Deployment queued...',
                     connecting: 'Connecting to VM via SSH...',
                     deploying: 'Installing application (pulling images)...',
-                    tunnel: 'Setting up public URL...',
+                    tunnel: 'Setting up HTTPS reverse proxy...',
                     done: 'Deployment complete!'
                 };
                 let deployData = null;
