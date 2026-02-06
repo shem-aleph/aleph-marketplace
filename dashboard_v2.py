@@ -965,8 +965,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 : 'Delete this deployment? This cannot be undone.';
             if (!confirm(confirmMsg)) return;
 
+            let forgetSucceeded = false;
+            let forgetSkipped = false;
+
             try {
-                // If we have an instance hash, forget it on the Aleph network first
+                // If we have an instance hash, try to forget it on the Aleph network
                 if (hasInstance) {
                     if (!window.AlephSDK || !wallet.alephAccount) {
                         showToast('Wallet not ready. Please reconnect.', 'error');
@@ -981,25 +984,60 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                             channel: 'ALEPH-CLOUDSOLUTIONS',
                             hashes: [deployment.instance_hash]
                         });
-                        showToast('Instance forgotten on Aleph network', 'success');
+                        forgetSucceeded = true;
                     } catch (forgetErr) {
                         console.error('Forget error:', forgetErr);
-                        showToast('Failed to forget instance: ' + (forgetErr.message || 'Unknown error'), 'error');
-                        return;
+                        const errMsg = forgetErr.message || '';
+                        // If already forgotten or not found, proceed with deletion
+                        if (errMsg.includes('not found') || errMsg.includes('already') || errMsg.includes('404')) {
+                            forgetSkipped = true;
+                            console.log('Instance already forgotten, proceeding with cleanup');
+                        } else {
+                            // Ask user if they want to proceed anyway
+                            if (!confirm('Could not forget instance on Aleph network: ' + errMsg + '\\n\\nRemove from tracker anyway?')) {
+                                return;
+                            }
+                            forgetSkipped = true;
+                        }
                     }
+                } else {
+                    forgetSkipped = true;
                 }
 
-                // Now delete from our tracker (and stop containers)
+                // Now delete from our tracker (and try to stop containers)
                 const res = await fetch('/api/deployments/' + encodeURIComponent(id), {
                     method: 'DELETE',
                     headers: { 'Authorization': 'Bearer ' + wallet.token }
                 });
+
+                // Even if backend delete fails (VM unreachable), we might want to remove from tracker
                 if (!res.ok) {
                     const errData = await res.json().catch(function() { return {}; });
-                    showToast('Failed to clean up deployment: ' + (errData.detail || 'Unknown error'), 'error');
+                    // If VM is unreachable, offer to remove from tracker anyway
+                    if (errData.detail && (errData.detail.includes('unreachable') || errData.detail.includes('SSH') || errData.detail.includes('Connection'))) {
+                        if (!confirm('VM is unreachable (may already be deleted). Remove from tracker anyway?')) {
+                            return;
+                        }
+                        // Call a force-remove endpoint or just refresh
+                        const forceRes = await fetch('/api/deployments/' + encodeURIComponent(id) + '/force-remove', {
+                            method: 'POST',
+                            headers: { 'Authorization': 'Bearer ' + wallet.token }
+                        });
+                        if (forceRes.ok) {
+                            showToast('Deployment removed from tracker', 'success');
+                            await fetchMyDeployments();
+                            return;
+                        }
+                    }
+                    showToast('Failed to clean up: ' + (errData.detail || 'Unknown error'), 'error');
                     return;
                 }
-                showToast('Deployment deleted successfully', 'success');
+
+                if (forgetSucceeded) {
+                    showToast('Instance forgotten and deployment deleted', 'success');
+                } else {
+                    showToast('Deployment removed from tracker', 'success');
+                }
                 await fetchMyDeployments();
             } catch (e) {
                 console.error('Delete deployment error:', e);

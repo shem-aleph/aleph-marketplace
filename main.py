@@ -760,10 +760,34 @@ async def delete_deployment(deployment_id: str, authorization: Optional[str] = H
     )
     
     result = await executor.remove_app(deployment["app_id"])
-    
+
     deployment_tracker.remove_deployment(deployment_id)
-    
+
     return {"deployment_id": deployment_id, **result}
+
+
+@app.post("/api/deployments/{deployment_id}/force-remove")
+async def force_remove_deployment(deployment_id: str, authorization: Optional[str] = Header(None)):
+    """Remove deployment from tracker without SSH cleanup (for unreachable VMs)"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    session = get_session_from_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    deployment = deployment_tracker.get_deployment(deployment_id)
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    # Verify ownership
+    if deployment["address"] != session["address"].lower():
+        raise HTTPException(status_code=403, detail="Not your deployment")
+
+    deployment_tracker.remove_deployment(deployment_id)
+
+    return {"deployment_id": deployment_id, "status": "removed", "note": "Removed from tracker without SSH cleanup"}
 
 
 @app.get("/api/instances/{address}")
