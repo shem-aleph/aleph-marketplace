@@ -954,18 +954,56 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         async function deleteDeployment(id) {
             if (!wallet.token) return;
-            if (!confirm('Delete this deployment? This cannot be undone.')) return;
+
+            // Find the deployment to get instance_hash
+            const deployment = myDeployments.find(function(d) { return d.id === id; });
+            if (!deployment) { showToast('Deployment not found', 'error'); return; }
+
+            const hasInstance = deployment.instance_hash && deployment.instance_hash.length > 0;
+            const confirmMsg = hasInstance
+                ? 'Delete this deployment and forget the VM instance? This will stop billing. This cannot be undone.'
+                : 'Delete this deployment? This cannot be undone.';
+            if (!confirm(confirmMsg)) return;
+
             try {
+                // If we have an instance hash, forget it on the Aleph network first
+                if (hasInstance) {
+                    if (!window.AlephSDK || !wallet.alephAccount) {
+                        showToast('Wallet not ready. Please reconnect.', 'error');
+                        return;
+                    }
+
+                    showToast('Please sign the forget message in your wallet...', 'info');
+
+                    const client = new window.AlephSDK.AuthenticatedAlephHttpClient(wallet.alephAccount);
+                    try {
+                        await client.forget({
+                            channel: 'ALEPH-CLOUDSOLUTIONS',
+                            hashes: [deployment.instance_hash]
+                        });
+                        showToast('Instance forgotten on Aleph network', 'success');
+                    } catch (forgetErr) {
+                        console.error('Forget error:', forgetErr);
+                        showToast('Failed to forget instance: ' + (forgetErr.message || 'Unknown error'), 'error');
+                        return;
+                    }
+                }
+
+                // Now delete from our tracker (and stop containers)
                 const res = await fetch('/api/deployments/' + encodeURIComponent(id), {
                     method: 'DELETE',
                     headers: { 'Authorization': 'Bearer ' + wallet.token }
                 });
-                if (!res.ok) { showToast('Failed to delete deployment', 'error'); return; }
-                showToast('Deployment deleted', 'success');
+                if (!res.ok) {
+                    const errData = await res.json().catch(function() { return {}; });
+                    showToast('Failed to clean up deployment: ' + (errData.detail || 'Unknown error'), 'error');
+                    return;
+                }
+                showToast('Deployment deleted successfully', 'success');
                 await fetchMyDeployments();
             } catch (e) {
                 console.error('Delete deployment error:', e);
-                showToast('Failed to delete deployment', 'error');
+                showToast('Failed to delete deployment: ' + e.message, 'error');
             }
         }
 
