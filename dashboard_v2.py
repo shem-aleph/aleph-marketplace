@@ -904,9 +904,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     + sshHtml
                     + (created ? '<div class="deployment-meta">Deployed: ' + escapeHtml(created) + '</div>' : '')
                     + '<div class="deployment-actions">'
-                    + '<button onclick="refreshDeploymentStatus(\'' + escapeHtml(d.id) + '\')">&#x21bb; Refresh</button>'
-                    + '<button onclick="stopDeployment(\'' + escapeHtml(d.id) + '\')">&#x23F9; Stop</button>'
-                    + '<button class="danger" onclick="deleteDeployment(\'' + escapeHtml(d.id) + '\')">&#x1F5D1; Delete</button>'
+                    + '<button onclick="refreshDeploymentStatus(\\'' + escapeHtml(d.id) + '\\')">&#x21bb; Refresh</button>'
+                    + '<button onclick="stopDeployment(\\'' + escapeHtml(d.id) + '\\')">&#x23F9; Stop</button>'
+                    + '<button class="danger" onclick="deleteDeployment(\\'' + escapeHtml(d.id) + '\\')">&#x1F5D1; Delete</button>'
                     + '</div>'
                     + '</div>';
             }).join('');
