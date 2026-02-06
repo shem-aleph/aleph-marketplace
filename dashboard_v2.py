@@ -890,7 +890,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     sshHtml = '<div class="deployment-meta">ssh -p ' + port + ' root@' + escapeHtml(d.ssh_host) + '</div>';
                 }
 
-                const created = d.created_at ? new Date(d.created_at * 1000).toLocaleDateString() : '';
+                const created = d.created_at ? new Date(d.created_at).toLocaleDateString() : '';
 
                 return '<div class="deployment-card" id="deploy-card-' + escapeHtml(d.id) + '">'
                     + '<div class="deployment-header">'
